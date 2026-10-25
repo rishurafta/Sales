@@ -371,7 +371,6 @@ function ph(label,c1,c2){
 
 // Fallback data for Users, Products, Staff (saved in LocalStorage)
 const LS_KEY = 'tyro_crm_local_v2';
-const LS_HISTORY = 'tyro_crm_history';
 
 function loadLocal() {
   try {
@@ -402,33 +401,26 @@ function loadLocal() {
   };
 }
 
-function saveLocal() {
-  const localDB = {
-    settings: DB.settings,
-    users: DB.users,
-    tags: DB.tags,
-    columns: DB.columns,
-    products: DB.products,
-    staff: DB.staff
-  };
+async function saveLocal() {
+  const localDB = { settings: DB.settings, users: DB.users, columns: DB.columns, products: DB.products, staff: DB.staff };
   localStorage.setItem(LS_KEY, JSON.stringify(localDB));
+
+  // Sync to Cloud
+  try {
+    await fetch(`${API_URL}/api/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        settings: DB.settings,
+        users: DB.users,
+        columns: DB.columns
+      })
+    });
+  } catch(e) { console.error('Cloud sync failed', e); }
 }
 
 let DB = loadLocal();
 DB.leads = []; // Will be populated from Cloudflare
-
-// History Storage (Local)
-let REMARKS_HISTORY = {}; 
-function loadRemarksHistory() {
-  try {
-    const h = localStorage.getItem(LS_HISTORY);
-    if (h) REMARKS_HISTORY = JSON.parse(h);
-  } catch(e){}
-}
-function saveRemarksHistory() {
-  localStorage.setItem(LS_HISTORY, JSON.stringify(REMARKS_HISTORY));
-}
-loadRemarksHistory();
 
 let UI = {
   page:'dashboard',
@@ -490,9 +482,12 @@ async function fetchLeads() {
     const res = await fetch(`${API_URL}/api/leads`);
     if(res.ok) {
       const data = await res.json();
-      DB.leads = data.map(l => ({ ...l, orderAmount: Number(l.orderAmount), orderQty: Number(l.orderQty) }));
+      DB.leads = data.leads.map(l => ({ ...l, orderAmount: Number(l.orderAmount), orderQty: Number(l.orderQty) }));
+      if(data.settings) DB.settings = { ...DB.settings, ...data.settings };
+      if(data.users && data.users.length > 0) DB.users = data.users;
+      if(data.columns && data.columns.length > 0) DB.columns = data.columns;
     }
-  } catch(e) { console.error('Failed to load leads', e); }
+  } catch(e) { console.error('Failed to load data', e); }
 }
 
 async function boot() {
@@ -796,7 +791,7 @@ function rowToLead(row,u){
   };
   
   const lead = {
-    id:uid('ld'), createdAt:Date.now()
+    id:uid('ld'), createdAt:Date.now(), remarksHistory:[]
   };
   
   DB.columns.forEach(c => {
@@ -810,6 +805,13 @@ function rowToLead(row,u){
   if(!lead.entryDate) lead.entryDate = today();
   if(!lead.tagging) lead.tagging = 'Hot';
   if(!lead.assignedTo) lead.assignedTo = DB.settings.currentUserId;
+  
+  if (lead.remarks && lead.remarks.trim() !== '') {
+    lead.remarksHistory.push({
+      text: lead.remarks,
+      date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+    });
+  }
 
   return lead;
 }
@@ -834,7 +836,7 @@ async function importMapped(silent){
   
   if(newLeads.length > 0) {
     try {
-      await fetch(`${API_URL}/api/leads`, {
+      await fetch(`${API_URL}/api/leads/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newLeads) 
@@ -1137,8 +1139,8 @@ function editLead(id){
     else if(isTextarea) {
       // Add History Button if remarks exist
       let historyBtn = '';
-      if(c.key === 'remarks' && l && REMARKS_HISTORY[l.id] && REMARKS_HISTORY[l.id].length > 0) {
-        historyBtn = `<button class="btn sm ghost" style="margin-left:10px;padding:2px 8px;font-size:10px;border:1px solid var(--primary);color:var(--primary)" onclick="openRemarksHistory('${l.id}')">📝 History (${REMARKS_HISTORY[l.id].length})</button>`;
+      if(c.key === 'remarks' && l && l.remarksHistory && l.remarksHistory.length > 0) {
+        historyBtn = `<button class="btn sm ghost" style="margin-left:10px;padding:2px 8px;font-size:10px;border:1px solid var(--primary);color:var(--primary)" onclick="openRemarksHistory('${l.id}')">📝 History (${l.remarksHistory.length})</button>`;
       }
       
       const labelHtml = `<label style="display:flex;justify-content:space-between;align-items:center">${esc(c.label)} ${historyBtn}</label>`;
@@ -1187,11 +1189,11 @@ function editLead(id){
 }
 
 function openRemarksHistory(id) {
-  const history = REMARKS_HISTORY[id] || [];
-  if (history.length === 0) return;
+  const l = DB.leads.find(x => x.id === id);
+  if (!l || !l.remarksHistory || l.remarksHistory.length === 0) return;
   
   // Show history in reverse order (latest first)
-  const historyHtml = history.slice().reverse().map(h => `
+  const historyHtml = l.remarksHistory.slice().reverse().map(h => `
     <div style="padding:12px; border-bottom:1px solid var(--border); background:var(--bg2); border-radius:10px; margin-bottom:10px;">
       <div style="font-size:11px; color:var(--muted); margin-bottom:6px; font-weight:700;">📅 ${h.date}</div>
       <div style="font-size:13px; color:var(--text); white-space:pre-wrap; line-height:1.5;">${esc(h.text)}</div>
@@ -1221,44 +1223,41 @@ async function saveLead(id){
     const idx=DB.leads.findIndex(x=>x.id===id); 
     if(idx>-1) {
       const oldLead = DB.leads[idx];
-      // Logic for Remarks History (Local Storage)
+      
+      // Save History
+      let history = oldLead.remarksHistory || [];
       if (data.remarks && data.remarks.trim() !== '' && data.remarks !== oldLead.remarks) {
-        if (!REMARKS_HISTORY[id]) REMARKS_HISTORY[id] = [];
-        REMARKS_HISTORY[id].push({
+        history.push({
           text: data.remarks,
           date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
         });
-        saveRemarksHistory();
       }
       
-      DB.leads[idx]=Object.assign(DB.leads[idx],data); 
+      DB.leads[idx]=Object.assign(DB.leads[idx],data, { remarksHistory: history }); 
+      await fetch(`${API_URL}/api/leads/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify([DB.leads[idx]])
+      });
     }
-    
-    await fetch(`${API_URL}/api/leads/update`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...data, id })
-    });
     toast('Lead updated successfully','ok'); 
   }
   else { 
-    const newLead = Object.assign({id:uid('ld'),createdAt:Date.now()},data);
+    const newLead = Object.assign({id:uid('ld'),createdAt:Date.now(),remarksHistory:[]},data);
     
     // First time remarks
     if (newLead.remarks && newLead.remarks.trim() !== '') {
-      REMARKS_HISTORY[newLead.id] = [{
+      newLead.remarksHistory.push({
         text: newLead.remarks,
         date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
-      }];
-      saveRemarksHistory();
+      });
     }
     
     DB.leads.push(newLead); 
-    
-    await fetch(`${API_URL}/api/leads`, {
+    await fetch(`${API_URL}/api/leads/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newLead)
+      body: JSON.stringify([newLead])
     });
     toast('Lead added successfully','ok'); 
   }
@@ -1270,12 +1269,6 @@ async function deleteLead(id){
   if(!confirm(`Delete lead "${l.name||l.mobile}"? This cannot be undone.`)) return;
   DB.leads=DB.leads.filter(x=>x.id!==id);
   UI.selectedLeads.delete(id);
-  
-  // Also delete local history
-  if(REMARKS_HISTORY[id]) {
-    delete REMARKS_HISTORY[id];
-    saveRemarksHistory();
-  }
   
   await fetch(`${API_URL}/api/leads/delete`, {
     method: 'POST',
@@ -1531,10 +1524,10 @@ async function transferLeads(){
     if(l.assignedTo===from){ 
       l.assignedTo=to; 
       n++; 
-      await fetch(`${API_URL}/api/leads/update`, {
+      await fetch(`${API_URL}/api/leads/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...l, id: l.id })
+        body: JSON.stringify([l])
       });
     } 
   }
@@ -1564,9 +1557,7 @@ async function factoryReset(){
   DB = loadLocal(); // reset local
   DB.settings.currentUserId = null;
   DB.leads = [];
-  REMARKS_HISTORY = {};
   saveLocal();
-  saveRemarksHistory();
   // Cloudflare data won't be auto-deleted here (requires API endpoint), just logout
   $('#mainApp').classList.remove('show');
   $('#loginScreen').style.display = 'flex';
