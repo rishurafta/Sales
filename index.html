@@ -338,6 +338,38 @@ async function saveToDB(data) {
   }
 }
 
+// ⚡ FAST PATCH METHODS (Only updates specific nodes, no full DB rewrite)
+async function patchDB(path, data) {
+  if (isFirebaseReady) {
+    try { await db.ref('crm/' + path).update(data); } catch(e) { toast('Save failed','err'); }
+  } else {
+    let current = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+    let parts = path.split('/');
+    let obj = current;
+    for(let i=0; i<parts.length-1; i++) { obj = obj[parts[i]]; }
+    // LocalStorage merge logic for safety
+    if(typeof data === 'object' && data !== null) {
+      obj[parts[parts.length-1]] = Object.assign(obj[parts[parts.length-1]] || {}, data);
+    } else {
+      obj[parts[parts.length-1]] = data;
+    }
+    localStorage.setItem(LS_KEY, JSON.stringify(current));
+  }
+}
+
+async function deleteDB(path) {
+  if (isFirebaseReady) {
+    try { await db.ref('crm/' + path).remove(); } catch(e) { toast('Delete failed','err'); }
+  } else {
+    let current = JSON.parse(localStorage.getItem(LS_KEY) || '{}');
+    let parts = path.split('/');
+    let obj = current;
+    for(let i=0; i<parts.length-1; i++) { obj = obj[parts[i]]; }
+    delete obj[parts[parts.length-1]];
+    localStorage.setItem(LS_KEY, JSON.stringify(current));
+  }
+}
+
 const BASE_FIELDS=[
   {key:'leadSource',  label:'Lead Source',   type:'text'},
   {key:'entryDate',   label:'Entry Date',    type:'date'},
@@ -465,7 +497,7 @@ function applyTheme(){
 }
 function toggleTheme(){
   DB.settings.theme = (DB.settings.theme==='dark')?'light':'dark';
-  applyTheme(); saveAll(); toast('Theme changed to '+DB.settings.theme,'ok');
+  applyTheme(); patchDB('settings', {theme: DB.settings.theme}); toast('Theme changed to '+DB.settings.theme,'ok');
 }
 
 function ensurePerms(){
@@ -482,12 +514,7 @@ function ensurePerms(){
       PAGES.forEach(p=>{ if(!u.perms[p]){ u.perms[p]=1; dirty=true; } });
     }
   });
-  if(dirty) saveAll();
-}
-
-async function saveAll(silent=false){
-  await saveToDB(DB);
-  if(!silent) console.log('Saved to DB');
+  if(dirty) patchDB('users', DB.users); 
 }
 
 async function boot() {
@@ -496,6 +523,9 @@ async function boot() {
   
   if (data) {
     DB = data;
+    DB.leads = DB.leads || [];
+    DB.products = DB.products || [];
+    DB.users = DB.users || [];
   } else {
     DB = seed();
     await saveToDB(DB);
@@ -509,6 +539,7 @@ async function boot() {
       const live = snap.val();
       if (!live) return;
       if ($('#modalRoot').innerHTML !== '') return;
+      
       DB = live;
       if (DB.settings.currentUserId && document.getElementById('mainApp').classList.contains('show')) {
         renderNav(); updateTopbar();
@@ -521,7 +552,6 @@ async function boot() {
     $('#loginScreen').style.display = 'none';
     $('#mainApp').classList.add('show');
     renderNav(); updateTopbar(); go('dashboard');
-    if(DB.settings.autoSync) startAutoSync();
   } else {
     $('#loginScreen').style.display = 'flex';
     $('#mainApp').classList.remove('show');
@@ -536,7 +566,7 @@ function doLogin(){
   if(!user){ toast('Invalid Email/User ID or Password','err'); return; }
   
   DB.settings.currentUserId = user.id;
-  saveAll();
+  patchDB('settings', {currentUserId: user.id});
   
   $('#loginScreen').style.display = 'none';
   $('#mainApp').classList.add('show');
@@ -550,7 +580,7 @@ function doLogin(){
 function confirmLogout(){
   if(!confirm('Are you sure you want to log out?')) return;
   DB.settings.currentUserId = null;
-  saveAll();
+  patchDB('settings', {currentUserId: null});
   $('#mainApp').classList.remove('show');
   $('#loginScreen').style.display = 'flex';
   $('#loginPass').value = '';
@@ -607,7 +637,7 @@ function updateTopbar(){
   b.textContent=n; b.style.display=n?'grid':'none';
 }
 function refresh(silent){
-  saveAll(silent); renderNav(); updateTopbar();
+  renderNav(); updateTopbar();
   if(RENDER[UI.page]) RENDER[UI.page]();
 }
 
@@ -739,7 +769,7 @@ RENDER.uploads = function(){
   drop.ondrop=e=>{e.preventDefault();drop.style.borderColor='var(--border)';if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0]);};
   fileIn.onchange=e=>{ if(e.target.files[0]) handleFile(e.target.files[0]); };
   $('#gsAuto').onchange=function(){
-    DB.settings.autoSync=this.checked; saveAll();
+    DB.settings.autoSync=this.checked; patchDB('settings', {autoSync: this.checked});
     if(this.checked){ startAutoSync(); toast('Auto sync enabled','ok'); } else { stopAutoSync(); toast('Auto sync disabled','info'); }
   };
   if(UI.upload) renderMapping();
@@ -792,7 +822,7 @@ function renderMapping(){
   $('#mapArea').innerHTML=`
   <div class="card">
     <div class="card-head"><h3>🗂️ Column Mapping — ${esc(u.fileName)} <span class="muted" style="font-weight:500">(${u.rows.length} rows)</span></h3>
-      <div style="display:flex;gap:8px"><button class="btn sm" onclick="UI.upload=null;document.getElementById('mapArea').innerHTML=''">Cancel</button><button class="btn primary" onclick="importMapped()">⬆ Import ${u.rows.length} Rows</button></div>
+      <div style="display:flex;gap:8px"><button class="btn sm" onclick="UI.upload=null;document.getElementById('mapArea').innerHTML=''">Cancel</button><button class="btn primary" onclick="importMapped()">⬆ Import & Merge ${u.rows.length} Rows</button></div>
     </div>
     <div class="grid-3" style="margin-bottom:16px">${BASE_FIELDS.map(f=>`<div><label class="fld">${f.label}${['name','mobile'].includes(f.key)?' *':''}</label><select onchange="UI.upload.map['${f.key}']=this.value"><option value="">— Skip —</option>${u.headers.map(h=>`<option value="${esc(h)}" ${u.map[f.key]===h?'selected':''}>${esc(h)}</option>`).join('')}</select></div>`).join('')}</div>
     <div class="card-head"><h3>👁️ Preview (first 5 rows)</h3></div>
@@ -825,17 +855,26 @@ async function importMapped(silent){
   if(btn){ btn.disabled = true; btn.textContent = "Importing..."; }
 
   let added=0, skipped=0;
+  let newLeads = [];
   u.rows.forEach(r=>{
     const lead=rowToLead(r,u);
     if(!lead.name && !lead.mobile){ skipped++; return; }
+    // Duplicate check
     if(lead.mobile && DB.leads.some(x=>x.mobile===lead.mobile)){ skipped++; return; }
-    DB.leads.push(lead); added++;
+    DB.leads.push(lead); 
+    newLeads.push(lead); 
+    added++;
   });
   
-  await saveAll();
+  if(newLeads.length > 0) {
+    // .update() ensures we only ADD new leads, we don't overwrite existing ones
+    const updates = {};
+    newLeads.forEach(l => updates[l.id] = l);
+    await patchDB('leads', updates);
+  }
   updateTopbar();
   
-  if(!silent){ toast(`Imported ${added} leads (${skipped} skipped)`,'ok'); }
+  if(!silent){ toast(`Imported & Merged ${added} leads (${skipped} skipped)`,'ok'); }
   UI.upload=null; const area=$('#mapArea'); if(area) area.innerHTML='';
   if(UI.page==='uploads') RENDER.uploads(); else if(UI.page==='leads') RENDER.leads();
 }
@@ -857,7 +896,7 @@ async function fetchSheet(silent=false){
   if(!urlInput){ toast('Please paste a Google Sheet URL','err'); return; }
   const info = extractSheetInfo(urlInput);
   if(!info){ toast('Invalid Google Sheet URL format','err'); return; }
-  DB.settings.sheetUrl = urlInput; DB.settings.sheetName = nameInput || ''; saveAll();
+  DB.settings.sheetUrl = urlInput; DB.settings.sheetName = nameInput || ''; patchDB('settings', {sheetUrl: urlInput, sheetName: nameInput});
   let csvUrl = `https://docs.google.com/spreadsheets/d/${info.sheetId}/export?format=csv`;
   if (info.gid) csvUrl += `&gid=${info.gid}`;
   else if (nameInput) csvUrl += `&sheet=${encodeURIComponent(nameInput)}`;
@@ -881,7 +920,7 @@ async function fetchSheet(silent=false){
     if (!text) throw new Error('Could not reach Google Sheets. Ensure sharing is set to "Anyone with the link → Viewer".');
     const parsed = parseSheetData(text, false, 'Google Sheet');
     UI.upload = parsed; UI.upload.map = autoMap(parsed.headers); UI.upload.source = 'sheet';
-    renderMapping(); DB.settings.lastSync = new Date().toLocaleString(); saveAll();
+    renderMapping(); DB.settings.lastSync = new Date().toLocaleString(); patchDB('settings', {lastSync: DB.settings.lastSync});
     toast('Sheet connected — '+parsed.rows.length+' rows loaded','ok');
     if(silent) importMapped(true);
   } catch(err){ toast('Sheet fetch error: ' + err.message, 'err'); console.error(err); }
@@ -1050,10 +1089,13 @@ async function bulkDeleteLeads() {
   if (count === 0) return;
   if (!confirm(`Are you sure you want to permanently delete ${count} selected lead(s)?`)) return;
   
+  const updates = {};
+  UI.selectedLeads.forEach(id => updates[id] = null);
+  
   DB.leads = DB.leads.filter(l => !UI.selectedLeads.has(l.id));
   UI.selectedLeads.clear();
   
-  await saveAll();
+  await patchDB('leads', updates);
   updateTopbar();
   RENDER.leads();
   toast(`${count} leads deleted successfully`, 'ok');
@@ -1087,7 +1129,7 @@ function resetColumns(){ DB.columns = JSON.parse(JSON.stringify(DEFAULT_COLUMNS)
 function applyColumnSettings(){
   $$('#colSettingList input[type="checkbox"]').forEach(cb=>{ const i=Number(cb.dataset.col); if(!isNaN(i) && DB.columns[i]) DB.columns[i].visible = cb.checked; });
   if(!DB.columns.some(c=>c.visible)){ toast('At least one column must be visible','err'); return; }
-  saveAll(); closeModal(); RENDER.leads(); toast('Column preferences saved ✔','ok');
+  patchDB('columns', DB.columns); closeModal(); RENDER.leads(); toast('Column preferences saved ✔','ok');
 }
 
 function exportLeads(){
@@ -1131,8 +1173,19 @@ function saveLead(id){
   data.orderAmount=Number(data.orderAmount)||0; data.orderQty=Number(data.orderQty)||0;
   if(!data.name && !data.mobile){ toast('Name or Mobile is required','err'); return; }
   if(!data.entryDate) data.entryDate=today();
-  if(id){ const idx=DB.leads.findIndex(x=>x.id===id); if(idx>-1) DB.leads[idx]=Object.assign(DB.leads[idx],data); toast('Lead updated successfully','ok'); }
-  else { DB.leads.push(Object.assign({id:uid('ld'),createdAt:Date.now()},data)); toast('Lead added successfully','ok'); }
+  
+  if(id){ 
+    const idx=DB.leads.findIndex(x=>x.id===id); 
+    if(idx>-1) DB.leads[idx]=Object.assign(DB.leads[idx],data); 
+    patchDB('leads/' + id, data);
+    toast('Lead updated successfully','ok'); 
+  }
+  else { 
+    const newLead = Object.assign({id:uid('ld'),createdAt:Date.now()},data);
+    DB.leads.push(newLead); 
+    patchDB('leads/' + newLead.id, newLead);
+    toast('Lead added successfully','ok'); 
+  }
   closeModal(); refresh();
 }
 
@@ -1141,7 +1194,8 @@ function deleteLead(id){
   if(!confirm(`Delete lead "${l.name||l.mobile}"? This cannot be undone.`)) return;
   DB.leads=DB.leads.filter(x=>x.id!==id);
   UI.selectedLeads.delete(id);
-  saveAll(); updateTopbar(); RENDER[UI.page]&&RENDER[UI.page](); toast('Lead deleted','ok');
+  deleteDB('leads/' + id); 
+  updateTopbar(); RENDER[UI.page]&&RENDER[UI.page](); toast('Lead deleted','ok');
 }
 
 function sendMessage(leadId){
@@ -1220,10 +1274,23 @@ function pickProductImage(input){ const f=input.files[0]; if(!f) return; const r
 function saveProduct(id){
   const name=$('#pName').value.trim(); if(!name){ toast('Product name is required','err'); return; }
   const data={name, priceRange:$('#pPrice').value.trim()||'—', details:$('#pDetails').value.trim(), image:__prodImg || (id?DB.products.find(p=>p.id===id).image:ph(name.slice(0,8),'#4f46e5','#22d3ee'))};
-  if(id){ const i=DB.products.findIndex(p=>p.id===id); DB.products[i]=Object.assign(DB.products[i],data); } else DB.products.push(Object.assign({id:uid('p')},data));
-  __prodImg=null; saveAll(); closeModal(); RENDER.products(); toast('Product saved','ok');
+  if(id){ 
+    const i=DB.products.findIndex(p=>p.id===id); 
+    DB.products[i]=Object.assign(DB.products[i],data); 
+    patchDB('products/' + id, data);
+  } else { 
+    const newProd = Object.assign({id:uid('p')},data);
+    DB.products.push(newProd); 
+    patchDB('products/' + newProd.id, newProd);
+  }
+  __prodImg=null; closeModal(); RENDER.products(); toast('Product saved','ok');
 }
-function deleteProduct(id){ if(!confirm('Delete this product?')) return; DB.products=DB.products.filter(p=>p.id!==id); saveAll(); RENDER.products(); toast('Product deleted','ok'); }
+function deleteProduct(id){ 
+  if(!confirm('Delete this product?')) return; 
+  DB.products=DB.products.filter(p=>p.id!==id); 
+  deleteDB('products/' + id); 
+  RENDER.products(); toast('Product deleted','ok'); 
+}
 
 function staffModal(id){
   const s = id ? DB.staff.find(x=>x.id===id) : {id:null,name:'',mobile:'',profile:''};
@@ -1232,10 +1299,23 @@ function staffModal(id){
 function saveStaff(id){
   const data={name:$('#sName').value.trim(),mobile:$('#sMobile').value.trim(),profile:$('#sProfile').value.trim()};
   if(!data.name){ toast('Staff name required','err'); return; }
-  if(id){ const i=DB.staff.findIndex(s=>s.id===id); DB.staff[i]=Object.assign(DB.staff[i],data); } else DB.staff.push(Object.assign({id:uid('s')},data));
-  saveAll(); closeModal(); RENDER.products(); toast('Staff saved','ok');
+  if(id){ 
+    const i=DB.staff.findIndex(s=>s.id===id); 
+    DB.staff[i]=Object.assign(DB.staff[i],data); 
+    patchDB('staff/' + id, data);
+  } else { 
+    const newStaff = Object.assign({id:uid('s')},data);
+    DB.staff.push(newStaff); 
+    patchDB('staff/' + newStaff.id, newStaff);
+  }
+  closeModal(); RENDER.products(); toast('Staff saved','ok');
 }
-function deleteStaff(id){ if(!confirm('Delete this staff member?')) return; DB.staff=DB.staff.filter(s=>s.id!==id); saveAll(); RENDER.products(); toast('Staff deleted','ok'); }
+function deleteStaff(id){ 
+  if(!confirm('Delete this staff member?')) return; 
+  DB.staff=DB.staff.filter(s=>s.id!==id); 
+  deleteDB('staff/' + id); 
+  RENDER.products(); toast('Staff deleted','ok'); 
+}
 
 function promptAdminPassword(callback) {
   openModal(`
@@ -1272,8 +1352,8 @@ RENDER.settings = function(){
       <div class="hr"></div><button class="btn danger" style="width:100%" onclick="factoryReset()">⚠️ Reset Entire CRM (Factory)</button>
     </div>
     <div class="card"><div class="card-head"><h3>🎨 Appearance & Notifications</h3></div>
-      <div class="row-between" style="margin-bottom:12px"><span style="font-size:12.5px;font-weight:600">Theme</span><select style="width:130px" onchange="DB.settings.theme=this.value;applyTheme();saveAll()"><option value="dark" ${DB.settings.theme==='dark'?'selected':''}>Dark</option><option value="light" ${DB.settings.theme==='light'?'selected':''}>Light</option></select></div>
-      <div class="row-between"><span style="font-size:12.5px;font-weight:600">Notifications (reminders & follow-ups)</span><label class="switch"><input type="checkbox" ${DB.settings.notifications?'checked':''} onchange="DB.settings.notifications=this.checked;saveAll();toast('Notifications '+(this.checked?'ON':'OFF'),'ok')"><span class="slider"></span></label></div>
+      <div class="row-between" style="margin-bottom:12px"><span style="font-size:12.5px;font-weight:600">Theme</span><select style="width:130px" onchange="DB.settings.theme=this.value;applyTheme();patchDB('settings',{theme:this.value})"><option value="dark" ${DB.settings.theme==='dark'?'selected':''}>Dark</option><option value="light" ${DB.settings.theme==='light'?'selected':''}>Light</option></select></div>
+      <div class="row-between"><span style="font-size:12.5px;font-weight:600">Notifications (reminders & follow-ups)</span><label class="switch"><input type="checkbox" ${DB.settings.notifications?'checked':''} onchange="DB.settings.notifications=this.checked;patchDB('settings',{notifications:this.checked});toast('Notifications '+(this.checked?'ON':'OFF'),'ok')"><span class="slider"></span></label></div>
     </div>
     <div class="card"><div class="card-head"><h3>🔌 Integrations</h3></div>
       <label class="fld">WhatsApp Number (with country code)</label><input id="setWa" value="${esc(DB.settings.whatsapp)}" placeholder="919876543210" style="margin-bottom:10px">
@@ -1312,7 +1392,9 @@ function renderUserList(){
 function togglePerm(uid,perm,val){
   const u=DB.users.find(x=>x.id===uid); if(!u) return;
   if(u.role==='Admin'){ toast('Admin users always have all permissions','info'); renderUserList(); return; }
-  u.perms=u.perms||{}; u.perms[perm]=val?1:0; saveAll(); renderUserList(); toast('Permission updated','ok');
+  u.perms=u.perms||{}; u.perms[perm]=val?1:0; 
+  patchDB('users/' + uid, u); 
+  renderUserList(); toast('Permission updated','ok');
 }
 
 function userModal(id){
@@ -1327,33 +1409,72 @@ function userModal(id){
 function saveUser(id){
   const name=$('#uName').value.trim(); if(!name){ toast('Name is required','err'); return; }
   const data={name,email:$('#uEmail').value.trim(),role:$('#uRole').value,password:$('#uPass').value||'1234'};
-  if(id){ const u=DB.users.find(x=>x.id===id); Object.assign(u,data); if(u.role==='Admin'){ PAGES.forEach(p=>u.perms[p]=1); } }
-  else { const perms={}; PAGES.forEach(p=>perms[p]= data.role==='Admin' ? 1 : (p==='settings'?0:1)); DB.users.push(Object.assign({id:uid('u'),perms},data)); }
-  saveAll(); closeModal(); renderUserList(); updateTopbar(); renderNav(); toast('User saved','ok');
+  
+  if(id){ 
+    const u=DB.users.find(x=>x.id===id); 
+    Object.assign(u,data); 
+    if(u.role==='Admin'){ PAGES.forEach(p=>u.perms[p]=1); }
+    patchDB('users/' + id, u);
+  } else { 
+    const perms={}; 
+    PAGES.forEach(p=>perms[p]= data.role==='Admin' ? 1 : (p==='settings'?0:1)); 
+    const newUser = Object.assign({id:uid('u'),perms},data);
+    DB.users.push(newUser); 
+    patchDB('users/' + newUser.id, newUser);
+  }
+  closeModal(); renderUserList(); updateTopbar(); renderNav(); toast('User saved','ok');
 }
 
 function deleteUser(id){
   if(DB.users.length<=1){ toast('At least one user required','err'); return; }
   if(!confirm('Delete this user? Their leads will be reassigned to the first user.')) return;
   const fallback=DB.users.find(u=>u.id!==id).id;
-  DB.leads.forEach(l=>{ if(l.assignedTo===id) l.assignedTo=fallback; });
+  
+  const leadUpdates = {};
+  DB.leads.forEach(l=>{ 
+    if(l.assignedTo===id) {
+      l.assignedTo=fallback; 
+      leadUpdates[l.id] = {assignedTo: fallback};
+    } 
+  });
+  if(Object.keys(leadUpdates).length) patchDB('leads', leadUpdates);
+
   DB.users=DB.users.filter(u=>u.id!==id);
   if(DB.settings.currentUserId===id) DB.settings.currentUserId=fallback;
-  saveAll(); renderUserList(); updateTopbar(); renderNav(); toast('User deleted','ok');
+  
+  deleteDB('users/' + id);
+  patchDB('settings', {currentUserId: DB.settings.currentUserId});
+  
+  renderUserList(); updateTopbar(); renderNav(); toast('User deleted','ok');
 }
 
 function transferLeads(){
   const from=$('#tfFrom').value, to=$('#tfTo').value;
   if(from===to){ toast('Source and destination must differ','err'); return; }
-  let n=0; DB.leads.forEach(l=>{ if(l.assignedTo===from){ l.assignedTo=to; n++; } });
-  saveAll(); updateTopbar(); toast(`${n} leads transferred`,'ok'); RENDER[UI.page]&&RENDER[UI.page]();
+  let n=0; 
+  const updates = {};
+  DB.leads.forEach(l=>{ 
+    if(l.assignedTo===from){ 
+      l.assignedTo=to; 
+      updates[l.id] = {assignedTo: to};
+      n++; 
+    } 
+  });
+  patchDB('leads', updates); 
+  updateTopbar(); toast(`${n} leads transferred`,'ok'); RENDER[UI.page]&&RENDER[UI.page]();
 }
 
 function deleteJunk(){
   const n=DB.leads.filter(l=>l.tagging==='Junk').length;
   if(!n){ toast('No junk leads found','info'); return; }
   if(!confirm(`Delete ${n} junk leads permanently?`)) return;
-  DB.leads=DB.leads.filter(l=>l.tagging!=='Junk'); saveAll(); updateTopbar(); RENDER.settings(); toast(n+' junk leads deleted','ok');
+  
+  const updates = {};
+  DB.leads.filter(l=>l.tagging==='Junk').forEach(l => updates[l.id] = null);
+  
+  DB.leads=DB.leads.filter(l=>l.tagging!=='Junk'); 
+  patchDB('leads', updates); 
+  updateTopbar(); RENDER.settings(); toast(n+' junk leads deleted','ok');
 }
 
 async function factoryReset(){
@@ -1366,39 +1487,66 @@ async function factoryReset(){
   toast('CRM reset to factory demo data. Please login.','ok');
 }
 
-function saveIntegrations(){ DB.settings.whatsapp=$('#setWa').value.trim(); DB.settings.telegram=$('#setTg').value.trim(); saveAll(); toast('Integrations saved','ok'); }
+function saveIntegrations(){ 
+  DB.settings.whatsapp=$('#setWa').value.trim(); 
+  DB.settings.telegram=$('#setTg').value.trim(); 
+  patchDB('settings', {whatsapp: DB.settings.whatsapp, telegram: DB.settings.telegram}); 
+  toast('Integrations saved','ok'); 
+}
 
 function changePassword(){
   const u=currentUser(); const oldP=$('#pwOld').value, newP=$('#pwNew').value;
   if(oldP!==u.password){ toast('Current password is incorrect','err'); return; }
   if(!newP || newP.length<4){ toast('New password must be at least 4 characters','err'); return; }
-  u.password=newP; saveAll(); $('#pwOld').value=''; $('#pwNew').value=''; toast('Password updated successfully','ok');
+  u.password=newP; 
+  patchDB('users/' + u.id, {password: newP}); 
+  $('#pwOld').value=''; $('#pwNew').value=''; toast('Password updated successfully','ok');
 }
 
 function renderColList(){
   const box=$('#colList'); if(!box) return;
-  box.innerHTML=DB.columns.map((c,i)=>`<div class="row-between" style="padding:8px 0;border-bottom:1px solid var(--border)"><div style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600"><input type="checkbox" style="width:auto" ${c.visible?'checked':''} onchange="DB.columns[${i}].visible=this.checked;saveAll();renderColList()">${esc(c.label)}</div><div style="display:flex;gap:5px"><button class="btn sm" onclick="moveCol(${i},-1)" ${i===0?'disabled':''}>↑</button><button class="btn sm" onclick="moveCol(${i},1)" ${i===DB.columns.length-1?'disabled':''}>↓</button><button class="btn sm danger" onclick="removeColumn(${i})">✕</button></div></div>`).join('');
+  box.innerHTML=DB.columns.map((c,i)=>`<div class="row-between" style="padding:8px 0;border-bottom:1px solid var(--border)"><div style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600"><input type="checkbox" style="width:auto" ${c.visible?'checked':''} onchange="DB.columns[${i}].visible=this.checked;patchDB('columns', DB.columns);renderColList()">${esc(c.label)}</div><div style="display:flex;gap:5px"><button class="btn sm" onclick="moveCol(${i},-1)" ${i===0?'disabled':''}>↑</button><button class="btn sm" onclick="moveCol(${i},1)" ${i===DB.columns.length-1?'disabled':''}>↓</button><button class="btn sm danger" onclick="removeColumn(${i})">✕</button></div></div>`).join('');
 }
-function moveCol(i,dir){ const j=i+dir; if(j<0||j>=DB.columns.length) return; [DB.columns[i],DB.columns[j]]=[DB.columns[j],DB.columns[i]]; saveAll(); renderColList(); toast('Column moved','ok'); }
+function moveCol(i,dir){ const j=i+dir; if(j<0||j>=DB.columns.length) return; [DB.columns[i],DB.columns[j]]=[DB.columns[j],DB.columns[i]]; patchDB('columns', DB.columns); renderColList(); toast('Column moved','ok'); }
 function removeColumn(i){
   const c=DB.columns[i];
-  if(BASE_FIELDS.some(b=>b.key===c.key)){ if(!confirm(`"${c.label}" is a core field. Hide it instead of deleting?`)) return; DB.columns[i].visible=false; saveAll(); renderColList(); return; }
+  if(BASE_FIELDS.some(b=>b.key===c.key)){ if(!confirm(`"${c.label}" is a core field. Hide it instead of deleting?`)) return; DB.columns[i].visible=false; patchDB('columns', DB.columns); renderColList(); return; }
   if(!confirm(`Delete column "${c.label}" and its data from all leads?`)) return;
-  DB.leads.forEach(l=>{ delete l[c.key]; }); DB.columns.splice(i,1); saveAll(); renderColList(); toast('Column removed','ok');
+  
+  const updates = {};
+  DB.leads.forEach(l=>{ 
+    if(l[c.key] !== undefined) {
+      delete l[c.key]; 
+      updates[l.id] = {[c.key]: null};
+    }
+  });
+  
+  DB.columns.splice(i,1); 
+  if(Object.keys(updates).length) patchDB('leads', updates);
+  patchDB('columns', DB.columns); 
+  renderColList(); toast('Column removed','ok');
 }
 function addColumn(){
   const name=$('#newColName').value.trim(); if(!name){ toast('Enter a column name','err'); return; }
   if(DB.columns.some(c=>c.label.toLowerCase()===name.toLowerCase())){ toast('Column already exists','err'); return; }
-  DB.columns.push({key:'cf_'+uid(''),label:name,type:'text',visible:true}); $('#newColName').value=''; saveAll(); renderColList(); toast('Column added','ok');
+  DB.columns.push({key:'cf_'+uid(''),label:name,type:'text',visible:true}); 
+  $('#newColName').value=''; 
+  patchDB('columns', DB.columns); 
+  renderColList(); toast('Column added','ok');
 }
 function addTag(){
   const t=$('#newTag').value.trim(); if(!t){ toast('Enter a tagging name','err'); return; }
   if(DB.tags.includes(t)){ toast('Tagging already exists','err'); return; }
-  DB.tags.push(t); $('#newTag').value=''; saveAll(); RENDER.settings(); toast('Tagging added','ok');
+  DB.tags.push(t); 
+  $('#newTag').value=''; 
+  patchDB('tags', DB.tags); 
+  RENDER.settings(); toast('Tagging added','ok');
 }
 function removeTag(t){
   if(!confirm(`Remove tagging "${t}"? Leads with this tag will keep the value.`)) return;
-  DB.tags=DB.tags.filter(x=>x!==t); saveAll(); RENDER.settings(); toast('Tagging removed','ok');
+  DB.tags=DB.tags.filter(x=>x!==t); 
+  patchDB('tags', DB.tags); 
+  RENDER.settings(); toast('Tagging removed','ok');
 }
 
 boot();
