@@ -526,23 +526,35 @@ async function fetchUsers() {
 }
 
 // Clear local cache and reload (Button on Login Screen)
-function clearLocalAndReload() {
-  if(confirm('This will clear your local cache and load fresh data from cloud. Continue?')) {
+
+  function clearLocalAndReload() {
+  if(confirm('This will clear your local cache and log you out. Continue?')) {
     localStorage.removeItem(LS_KEY);
+    // 🔥 Ye line add karein taaki current user reset ho jaye
+    if (typeof DB !== 'undefined' && DB.settings) {
+      DB.settings.currentUserId = null;
+    }
     location.reload();
   }
 }
 
 async function boot() {
-  // Always fetch fresh data from Cloud FIRST
+  // 1. Cloud se fresh data load karein
   await fetchLeads();
-  await fetchUsers();        // 🔥 Users pakka cloud se aayenge
-  await fetchUsers();        // (double-check, agar pehli baar race condition ho)
+  await fetchUsers();        
+  await fetchUsers();        
   
-  // Then apply local settings
+  // 2. Permissions aur Theme apply karein
   ensurePerms();
   applyTheme();
   
+  // 🔥 3. Agar URL mein logout=true hai, toh current user clear karein
+  if(window.location.search.includes('logout=true')) {
+    DB.settings.currentUserId = null;
+    saveLocal();
+  }
+
+  // 4. Check karein ki koi logged in hai ya nahi
   if (DB.settings.currentUserId && DB.users.some(u=>u.id===DB.settings.currentUserId)) {
     $('#loginScreen').style.display = 'none';
     $('#mainApp').classList.add('show');
