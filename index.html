@@ -490,7 +490,14 @@ async function fetchLeads() {
       DB.leads = (data.leads || []).map(l => ({ ...l, orderAmount: Number(l.orderAmount), orderQty: Number(l.orderQty) }));
       if(data.settings) DB.settings = { ...DB.settings, ...data.settings };
       if(data.users && data.users.length > 0) DB.users = data.users;
+      
+      // 🔥 YAHAN CHANGE KIYA HAI: Agar database se columns/tags nahi aaye, toh default use karo
       if(data.columns && data.columns.length > 0) DB.columns = data.columns;
+      else DB.columns = JSON.parse(JSON.stringify(DEFAULT_COLUMNS));
+      
+      // Tags ke liye safety check
+      if(!DB.tags || DB.tags.length === 0) DB.tags = DEFAULT_TAGS.slice();
+
       console.log('✅ Leads fetched:', DB.leads.length, '| Users:', DB.users.length);
     } else {
       console.warn('⚠️ /api/leads returned HTTP', res.status);
