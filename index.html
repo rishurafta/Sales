@@ -705,7 +705,8 @@ function handleFile(file){
 
 function autoMap(headers){
   const map={};
-  BASE_FIELDS.forEach(f=>{
+  // Yahan hum DB.columns use kar rahe hain, taaki naye columns bhi map ho sakein
+  DB.columns.forEach(f=>{
     const norm=s=>String(s).toLowerCase().replace(/[^a-z0-9]/g,'');
     const target=norm(f.label);
     const hit=headers.find(h=>{ const n=norm(h); return n===target || n.includes(target) || (target.includes(n) && n.length>3); });
@@ -717,12 +718,16 @@ function autoMap(headers){
 function renderMapping(){
   const u=UI.upload;
   if(!u){ const a=$('#mapArea'); if(a) a.innerHTML=''; return; }
+  
+  // Yahan hum DB.columns use kar rahe hain taaki sabhi fields dikhein
+  const cols = DB.columns.filter(c => c.visible);
+  
   $('#mapArea').innerHTML=`
   <div class="card">
     <div class="card-head"><h3>🗂️ Column Mapping — ${esc(u.fileName)} <span class="muted" style="font-weight:500">(${u.rows.length} rows)</span></h3>
       <div style="display:flex;gap:8px"><button class="btn sm" onclick="UI.upload=null;document.getElementById('mapArea').innerHTML=''">Cancel</button><button class="btn primary" onclick="importMapped()">⬆ Import & Merge ${u.rows.length} Rows</button></div>
     </div>
-    <div class="grid-3" style="margin-bottom:16px">${BASE_FIELDS.map(f=>`<div><label class="fld">${f.label}${['name','mobile'].includes(f.key)?' *':''}</label><select onchange="UI.upload.map['${f.key}']=this.value"><option value="">— Skip —</option>${u.headers.map(h=>`<option value="${esc(h)}" ${u.map[f.key]===h?'selected':''}>${esc(h)}</option>`).join('')}</select></div>`).join('')}</div>
+    <div class="grid-3" style="margin-bottom:16px">${cols.map(f=>`<div><label class="fld">${esc(f.label)}${['name','mobile'].includes(f.key)?' *':''}</label><select onchange="UI.upload.map['${f.key}']=this.value"><option value="">— Skip —</option>${u.headers.map(h=>`<option value="${esc(h)}" ${u.map[f.key]===h?'selected':''}>${esc(h)}</option>`).join('')}</select></div>`).join('')}</div>
     <div class="card-head"><h3>👁️ Preview (first 5 rows)</h3></div>
     <div class="tbl-wrap" style="max-height:280px"><table><thead><tr>${u.headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${u.rows.slice(0,5).map(r=>`<tr>${u.headers.map((_,i)=>`<td>${esc(r[i]??'')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
   </div>`;
@@ -737,13 +742,28 @@ function rowToLead(row,u){
     if(m){ let y=m[3]; if(y.length===2) y='20'+y; return `${y}-${pad(m[2])}-${pad(m[1])}`; }
     const d=new Date(v); return isNaN(d)?'':fmtDate(d);
   };
-  return {
-    id:uid('ld'), leadSource:get('leadSource'), entryDate:toDate(get('entryDate'))||today(), mobile:get('mobile').replace(/\D/g,'').slice(-10),
-    name:get('name'), city:get('city'), state:get('state'), shopName:get('shopName'), orderAmount:Number(String(get('orderAmount')).replace(/[^\d.]/g,''))||0,
-    orderQty:Number(String(get('orderQty')).replace(/[^\d.]/g,''))||0, tagging:get('tagging')||'Hot', followUpDate:toDate(get('followUpDate')),
-    visitDate:toDate(get('visitDate')), remarks:get('remarks'), assignedTo:get('assignedTo')||DB.settings.currentUserId, createdAt:Date.now()
+  
+  const lead = {
+    id:uid('ld'), createdAt:Date.now()
   };
+  
+  // Yahan bhi hum DB.columns se loop kar rahe hain
+  DB.columns.forEach(c => {
+    let val = get(c.key);
+    if(c.type === 'date') val = toDate(val) || (c.key==='entryDate'? today() : '');
+    else if(c.type === 'number') val = Number(String(val).replace(/[^\d.]/g,'')) || 0;
+    
+    lead[c.key] = val;
+  });
+  
+  // Fallback validations
+  if(!lead.entryDate) lead.entryDate = today();
+  if(!lead.tagging) lead.tagging = 'Hot';
+  if(!lead.assignedTo) lead.assignedTo = DB.settings.currentUserId;
+
+  return lead;
 }
+
 async function importMapped(silent){
   const u=UI.upload; if(!u) return;
   if(!u.map.name && !u.map.mobile){ toast('Map at least Name or Mobile column','err'); return; }
