@@ -487,20 +487,33 @@ async function fetchLeads() {
     const res = await fetch(`${API_URL}/api/leads`);
     if(res.ok) {
       const data = await res.json();
-      DB.leads = (data.leads || []).map(l => ({ ...l, orderAmount: Number(l.orderAmount), orderQty: Number(l.orderQty) }));
+      
+      DB.leads = (data.leads || []).map(l => {
+        // 🔥 Custom Data (naye columns) ko wapas se lead ke andar daalein
+        let parsed = l;
+        try {
+          if (l.customData && l.customData !== '{}') {
+            const custom = JSON.parse(l.customData);
+            parsed = { ...l, ...custom }; 
+          }
+        } catch(e) { console.error("Custom data parse error", e); }
+
+        return {
+          ...parsed,
+          orderAmount: Number(parsed.orderAmount),
+          orderQty: Number(parsed.orderQty)
+        };
+      });
+
       if(data.settings) DB.settings = { ...DB.settings, ...data.settings };
       if(data.users && data.users.length > 0) DB.users = data.users;
       
-      // 🔥 YAHAN CHANGE KIYA HAI: Agar database se columns/tags nahi aaye, toh default use karo
       if(data.columns && data.columns.length > 0) DB.columns = data.columns;
       else DB.columns = JSON.parse(JSON.stringify(DEFAULT_COLUMNS));
       
-      // Tags ke liye safety check
       if(!DB.tags || DB.tags.length === 0) DB.tags = DEFAULT_TAGS.slice();
 
       console.log('✅ Leads fetched:', DB.leads.length, '| Users:', DB.users.length);
-    } else {
-      console.warn('⚠️ /api/leads returned HTTP', res.status);
     }
   } catch(e) { console.error('❌ Failed to load data', e); }
 }
@@ -860,15 +873,24 @@ function rowToLead(row,u){
   };
   
   const lead = {
-    id:uid('ld'), createdAt:Date.now(), remarksHistory:[]
+    id:uid('ld'), createdAt:Date.now(), remarksHistory:[], customData:{}
   };
   
+  // Base fields (jo database table mein hain)
+  const baseKeys = ['id','leadSource','entryDate','mobile','name','city','state','shopName','orderAmount','orderQty','tagging','followUpDate','visitDate','remarks','remarksHistory','assignedTo','createdAt','customData'];
+
   DB.columns.forEach(c => {
     let val = get(c.key);
+    
     if(c.type === 'date') val = toDate(val) || (c.key==='entryDate'? today() : '');
     else if(c.type === 'number') val = Number(String(val).replace(/[^\d.]/g,'')) || 0;
     
-    lead[c.key] = val;
+    // 🔥 Agar naya column hai, toh customData ke andar daalo
+    if (!baseKeys.includes(c.key)) {
+      lead.customData[c.key] = val;
+    } else {
+      lead[c.key] = val;
+    }
   });
   
   if(!lead.entryDate) lead.entryDate = today();
@@ -884,7 +906,6 @@ function rowToLead(row,u){
 
   return lead;
 }
-
 async function importMapped(silent){
   const u=UI.upload; if(!u) return;
   if(!u.map.name && !u.map.mobile){ toast('Map at least Name or Mobile column','err'); return; }
