@@ -1499,6 +1499,16 @@ function saveUser(id){
     const newUser = Object.assign({id:uid('u'),perms},data);
     DB.users.push(newUser); 
   }
+  
+  // Save to Cloud Database
+  try {
+    fetch(`${API_URL}/api/sync-users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ users: DB.users })
+    });
+  } catch(e) { console.error(e); }
+
   saveLocal();
   closeModal(); renderUserList(); updateTopbar(); renderNav(); toast('User saved','ok');
 }
@@ -1509,6 +1519,16 @@ function deleteUser(id){
   const fallback=DB.users.find(u=>u.id!==id).id;
   
   DB.leads.forEach(l=>{ if(l.assignedTo===id) l.assignedTo=fallback; });
+  
+  // Delete from Cloud Database
+  try {
+    fetch(`${API_URL}/api/sync-users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete', id: id })
+    });
+  } catch(e) { console.error(e); }
+
   DB.users=DB.users.filter(u=>u.id!==id);
   if(DB.settings.currentUserId===id) DB.settings.currentUserId=fallback;
   
