@@ -221,7 +221,6 @@ tbody tr:last-child td{border-bottom:0}
 </head>
 <body>
 
-<!-- LOGIN SCREEN -->
 <div id="loginScreen">
   <div class="login-card">
     <div class="logo">🛞</div>
@@ -236,11 +235,9 @@ tbody tr:last-child td{border-bottom:0}
       <input id="loginPass" type="password" placeholder="Enter password">
     </div>
     <button class="btn primary" style="width:100%;padding:12px" onclick="doLogin()">Sign In →</button>
-    
   </div>
 </div>
 
-<!-- MAIN APP -->
 <div class="app" id="mainApp">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
@@ -279,9 +276,6 @@ tbody tr:last-child td{border-bottom:0}
 <div id="toast"></div>
 
 <script>
-/* =====================================================================
-   Chourasiya Tyres CRM — Full Frontend CRM with Firebase Real-time Database
-   ===================================================================== */
 const $  = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>Array.from(r.querySelectorAll(s));
 const esc = s => String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -293,9 +287,6 @@ const money = n => '₹'+Number(n||0).toLocaleString('en-IN');
 function addDays(ds,n){ const d=new Date(ds+'T00:00:00'); d.setDate(d.getDate()+n); return fmtDate(d); }
 function prettyDate(s){ if(!s) return '—'; const p=String(s).split('-'); return p.length===3?`${p[2]}-${p[1]}-${p[0]}`:s; }
 
-/* =====================================================================
-   ⚠️ FIREBASE SETUP
-   ===================================================================== */
 const firebaseConfig = {
   apiKey: "AIzaSyCQuQOuXCtox5bmSllafwyDE-FsVBmFh_8",
   authDomain: "crm-system-55a36.firebaseapp.com",
@@ -312,33 +303,20 @@ let isFirebaseReady = false;
 
 function initFirebase() {
   try {
-    if (firebaseConfig.apiKey === "YOUR_API_KEY") {
-      console.warn("⚠️ Firebase not configured. Running in LocalStorage mode.");
-      return false;
-    }
+    if (firebaseConfig.apiKey === "YOUR_API_KEY") return false;
     firebase.initializeApp(firebaseConfig);
     db = firebase.database();
     isFirebaseReady = true;
-    console.log("✅ Firebase connected.");
     return true;
-  } catch (e) {
-    console.error("Firebase init failed:", e);
-    return false;
-  }
+  } catch (e) { return false; }
 }
 
-/* =====================================================================
-   DATABASE ABSTRACTION
-   ===================================================================== */
 const LS_KEY = 'tyro_crm_v6';
 
 async function loadFromDB() {
   if (isFirebaseReady) {
     return new Promise((resolve, reject) => {
-      db.ref('crm').once('value').then(snap => {
-        const data = snap.val();
-        resolve(data);
-      }).catch(reject);
+      db.ref('crm').once('value').then(snap => resolve(snap.val())).catch(reject);
     });
   } else {
     try {
@@ -354,20 +332,12 @@ async function loadFromDB() {
 
 async function saveToDB(data) {
   if (isFirebaseReady) {
-    try {
-      await db.ref('crm').set(data);
-    } catch(e) {
-      console.error("Save failed:", e);
-      toast('Save failed. Check internet connection.','err');
-    }
+    try { await db.ref('crm').set(data); } catch(e) { toast('Save failed. Check internet.','err'); }
   } else {
-    try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch(e) { toast('Storage full! Remove some product images.','err'); }
+    try { localStorage.setItem(LS_KEY, JSON.stringify(data)); } catch(e) { toast('Storage full!','err'); }
   }
 }
 
-/* =====================================================================
-   SEED DATA
-   ===================================================================== */
 const BASE_FIELDS=[
   {key:'leadSource',  label:'Lead Source',   type:'text'},
   {key:'entryDate',   label:'Entry Date',    type:'date'},
@@ -419,10 +389,7 @@ function seed(){
   },o);
 
   return {
-    settings:{
-      theme:'dark', notifications:true, whatsapp:'', telegram:'', currentUserId:null,
-      sheetUrl:'', sheetName:'', autoSync:false, lastSync:''
-    },
+    settings:{ theme:'dark', notifications:true, whatsapp:'', telegram:'', currentUserId:null, sheetUrl:'', sheetName:'', autoSync:false, lastSync:'' },
     users:[
       {id:'u1',name:'Rahul Sharma',email:'rahuk@tyro.com',password:'1234',role:'Admin',perms:{...DEFAULT_PERMS}},
       {id:'u2',name:'Priya Verma',email:'priya@tyro.com',password:'1234',role:'Sales',perms:{dashboard:1,leads:1,uploads:1,reports:1,products:1,settings:0}},
@@ -457,9 +424,6 @@ function seed(){
   };
 }
 
-/* =====================================================================
-   GLOBAL STATE
-   ===================================================================== */
 let DB = null;
 let UI = {
   page:'dashboard',
@@ -470,9 +434,6 @@ let UI = {
 };
 let DASH_LISTS = {};
 
-/* =====================================================================
-   HELPERS
-   ===================================================================== */
 function toast(msg,type='info'){
   const el=document.createElement('div');
   el.className='toast '+type;
@@ -529,9 +490,6 @@ async function saveAll(silent=false){
   if(!silent) console.log('Saved to DB');
 }
 
-/* =====================================================================
-   BOOT: Load from Firebase or LocalStorage
-   ===================================================================== */
 async function boot() {
   const ready = initFirebase();
   const data = await loadFromDB();
@@ -570,9 +528,6 @@ async function boot() {
   }
 }
 
-/* =====================================================================
-   AUTH
-   ===================================================================== */
 function doLogin(){
   const id = $('#loginId').value.trim().toLowerCase();
   const pass = $('#loginPass').value;
@@ -601,9 +556,6 @@ function confirmLogout(){
   $('#loginPass').value = '';
 }
 
-/* =====================================================================
-   FILTERS
-   ===================================================================== */
 function periodRange(period,from,to){
   const t=new Date(); const td=fmtDate(t);
   if(period==='yesterday'){ const y=addDays(td,-1); return {from:y,to:y}; }
@@ -624,9 +576,6 @@ function filterLeads({from,to,user}={}){
 }
 const isClosed = l => l.tagging==='Junk' || l.tagging==='Purchased';
 
-/* =====================================================================
-   NAVIGATION
-   ===================================================================== */
 const RENDER = {};
 function renderNav(){
   $('#nav').innerHTML = PAGES.map(p=>{
@@ -662,9 +611,6 @@ function refresh(silent){
   if(RENDER[UI.page]) RENDER[UI.page]();
 }
 
-/* =====================================================================
-   DASHBOARD
-   ===================================================================== */
 RENDER.dashboard = function(){
   if(!can('dashboard')){ $('#page-dashboard').innerHTML=`<div class="empty">Access denied</div>`; return; }
   const {from,to}=periodRange(UI.dashPeriod,UI.dashFrom,UI.dashTo);
@@ -764,9 +710,6 @@ function openNotifications(){
     </div>`).join(''):`<div class="empty">No pending notifications 🎉</div>`,{title:'🔔 Notifications'});
 }
 
-/* =====================================================================
-   UPLOADS (Same as before)
-   ===================================================================== */
 RENDER.uploads = function(){
   if(!can('uploads')){ $('#page-uploads').innerHTML=`<div class="empty">Access denied. Contact Admin.</div>`; return; }
   $('#page-uploads').innerHTML=`
@@ -874,9 +817,13 @@ function rowToLead(row,u){
   };
 }
 
-function importMapped(silent){
+async function importMapped(silent){
   const u=UI.upload; if(!u) return;
   if(!u.map.name && !u.map.mobile){ toast('Map at least Name or Mobile column','err'); return; }
+  
+  const btn = document.querySelector('#mapArea .btn.primary');
+  if(btn){ btn.disabled = true; btn.textContent = "Importing..."; }
+
   let added=0, skipped=0;
   u.rows.forEach(r=>{
     const lead=rowToLead(r,u);
@@ -884,7 +831,10 @@ function importMapped(silent){
     if(lead.mobile && DB.leads.some(x=>x.mobile===lead.mobile)){ skipped++; return; }
     DB.leads.push(lead); added++;
   });
-  saveAll(); updateTopbar();
+  
+  await saveAll();
+  updateTopbar();
+  
   if(!silent){ toast(`Imported ${added} leads (${skipped} skipped)`,'ok'); }
   UI.upload=null; const area=$('#mapArea'); if(area) area.innerHTML='';
   if(UI.page==='uploads') RENDER.uploads(); else if(UI.page==='leads') RENDER.leads();
@@ -939,9 +889,6 @@ async function fetchSheet(silent=false){
 function startAutoSync(){ stopAutoSync(); autoSyncTimer=setInterval(()=>fetchSheet(true),60000); }
 function stopAutoSync(){ if(autoSyncTimer){ clearInterval(autoSyncTimer); autoSyncTimer=null; } }
 
-/* =====================================================================
-   REPORTS
-   ===================================================================== */
 RENDER.reports = function(){
   if(!can('reports')){ $('#page-reports').innerHTML=`<div class="empty">Access denied</div>`; return; }
   const {from,to}=periodRange(UI.reportPeriod,UI.reportFrom,UI.reportTo);
@@ -1014,9 +961,6 @@ function downloadReport(){
   toast('Report downloaded as CSV','ok');
 }
 
-/* =====================================================================
-   LEADS (With Bulk Delete & Selection)
-   ===================================================================== */
 RENDER.leads = function(){
   if(!can('leads')){ $('#page-leads').innerHTML=`<div class="empty">Access denied</div>`; return; }
   const cols=DB.columns.filter(c=>c.visible);
@@ -1252,9 +1196,6 @@ async function doSend(){
   }catch(err){ console.error(err); toast('PDF error: '+err.message,'err'); }
 }
 
-/* =====================================================================
-   PRODUCTS
-   ===================================================================== */
 RENDER.products = function(){
   if(!can('products')){ $('#page-products').innerHTML=`<div class="empty">Access denied</div>`; return; }
   $('#page-products').innerHTML=`
@@ -1296,9 +1237,6 @@ function saveStaff(id){
 }
 function deleteStaff(id){ if(!confirm('Delete this staff member?')) return; DB.staff=DB.staff.filter(s=>s.id!==id); saveAll(); RENDER.products(); toast('Staff deleted','ok'); }
 
-/* =====================================================================
-   SETTINGS
-   ===================================================================== */
 function promptAdminPassword(callback) {
   openModal(`
     <div style="text-align:center; padding:10px">
@@ -1463,9 +1401,6 @@ function removeTag(t){
   DB.tags=DB.tags.filter(x=>x!==t); saveAll(); RENDER.settings(); toast('Tagging removed','ok');
 }
 
-/* =====================================================================
-   INIT
-   ===================================================================== */
 boot();
 
 window.addEventListener('keydown',e=>{ 
@@ -1474,35 +1409,15 @@ window.addEventListener('keydown',e=>{
 });
 </script>
 <script>
-  // Disable right-click context menu
-  document.addEventListener('contextmenu', function (e) {
-    e.preventDefault();
-  });
-
-  // Disable cut, copy, and paste
-  document.addEventListener('cut', function (e) {
-    e.preventDefault();
-  });
-
-  document.addEventListener('copy', function (e) {
-    e.preventDefault();
-  });
-
-  document.addEventListener('paste', function (e) {
-    e.preventDefault();
-  });
-
-  // Disable common keyboard shortcuts (Ctrl+C, Ctrl+X, Ctrl+V, Ctrl+U, F12, etc.)
+  document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  document.addEventListener('cut', function (e) { e.preventDefault(); });
+  document.addEventListener('copy', function (e) { e.preventDefault(); });
+  document.addEventListener('paste', function (e) { e.preventDefault(); });
   document.addEventListener('keydown', function (e) {
-    if (
-      e.ctrlKey &&
-      (e.key === 'c' || e.key === 'C' || e.key === 'x' || e.key === 'X' || e.key === 'v' || e.key === 'V' || e.key === 'u' || e.key === 'U') ||
-      e.key === 'F12'
-    ) {
+    if (e.ctrlKey && (e.key === 'c' || e.key === 'C' || e.key === 'x' || e.key === 'X' || e.key === 'v' || e.key === 'V' || e.key === 'u' || e.key === 'U') || e.key === 'F12') {
       e.preventDefault();
     }
   });
 </script>
-
 </body>
 </html>
