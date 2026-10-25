@@ -165,8 +165,38 @@ tbody tr:hover td { background: rgba(99,102,241,.09) !important; }
 .modal-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card);z-index:3}
 .modal-head h3{font-size:15px;font-weight:800}
 .modal-body{padding:18px}
-.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:13px}
-.form-grid .full{grid-column:1/-1}
+
+/* === NEW FORM CSS === */
+.form-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px;}
+.form-grid .full{grid-column:1/-1;}
+.form-group{display:flex;flex-direction:column;gap:6px;}
+.form-group label{font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.55px;}
+.form-group input, .form-group select, .form-group textarea {
+  padding:11px 14px;
+  font-size:13.5px;
+  border-radius:12px;
+  background:var(--bg2);
+  border:1px solid var(--border);
+  color:var(--text);
+  width:100%;
+  transition:0.2s;
+}
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+  border-color:var(--primary);
+  box-shadow:0 0 0 3px rgba(99,102,241,.18);
+}
+.form-group textarea { resize:vertical; min-height:80px; }
+
+/* === NEW STICKY MODAL HEADER === */
+.modal-head {
+  position: sticky; top: 0; background: var(--card); z-index: 10;
+}
+
+/* === RESPONSIVE === */
+@media(max-width:768px){
+  .form-grid { grid-template-columns: 1fr; }
+}
+
 .prod-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
 .prod-pick{border:2px solid var(--border);border-radius:14px;overflow:hidden;cursor:pointer;position:relative;background:var(--bg2);transition:.18s}
 .prod-pick:hover{transform:translateY(-2px)}
@@ -1079,25 +1109,52 @@ function exportLeads(){
 function editLead(id){
   const l = id ? DB.leads.find(x=>x.id===id) : null;
   const d = l || {id:null, leadSource:'', entryDate:today(), mobile:'', name:'', city:'', state:'', shopName:'', orderAmount:'', orderQty:'', tagging:DB.tags[0]||'Hot', followUpDate:'', visitDate:'', remarks:'', assignedTo:DB.settings.currentUserId};
+  
+  // NEW DESIGN FOR FORM FIELDS (2 Per Row)
   const fieldHtml = DB.columns.map(c=>{
-    const isTextarea=c.key==='remarks'||c.type==='textarea'; const type=c.type==='date'?'date':(c.type==='number'?'number':'text'); const val=esc(d[c.key]??'');
+    const isTextarea=c.key==='remarks'||c.type==='textarea'; 
+    const type=c.type==='date'?'date':(c.type==='number'?'number':'text'); 
+    const val=esc(d[c.key]??'');
     let input;
-    if(c.key==='tagging') input=`<select name="${c.key}">${DB.tags.map(t=>`<option value="${esc(t)}" ${d.tagging===t?'selected':''}>${esc(t)}</option>`).join('')}</select>`;
-    else if(isTextarea) input=`<textarea name="${c.key}" placeholder="Enter ${esc(c.label)}">${val}</textarea>`;
-    else input=`<input type="${type}" name="${c.key}" value="${val}" placeholder="Enter ${esc(c.label)}">`;
+    
+    if(c.key==='tagging') {
+      input=`<select name="${c.key}">${DB.tags.map(t=>`<option value="${esc(t)}" ${d.tagging===t?'selected':''}>${esc(t)}</option>`).join('')}</select>`;
+    }
+    else if(isTextarea) {
+      input=`<textarea name="${c.key}" placeholder="Enter ${esc(c.label)}">${val}</textarea>`;
+    }
+    else {
+      input=`<input type="${type}" name="${c.key}" value="${val}" placeholder="Enter ${esc(c.label)}">`;
+    }
+    
+    // Remarks field will take full width, others will be 2 in a row
     const full = isTextarea || c.key==='remarks' ? ' full' : '';
-    return `<div class="${full.trim()}"><label class="fld">${esc(c.label)}</label>${input}</div>`;
+    
+    return `<div class="form-group${full}">
+      <label>${esc(c.label)}</label>
+      ${input}
+    </div>`;
   }).join('');
+  
   openModal(`
-    <div class="form-grid">${fieldHtml}<div><label class="fld">Assigned To</label>
-      ${currentUser().role === 'Admin' ? 
-        `<select name="assignedTo">${DB.users.map(u=>`<option value="${u.id}" ${d.assignedTo===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}</select>` : 
-        `<select name="assignedTo">${DB.users.map(u=>`<option value="${u.id}" ${d.assignedTo===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}</select>`
-      }
-    </div></div>
+    <div class="form-grid">
+      ${fieldHtml}
+      <div class="form-group full">
+        <label>Assigned To</label>
+        <select name="assignedTo">
+          ${DB.users.map(u=>`<option value="${u.id}" ${d.assignedTo===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    
     <div class="hr"></div>
-    <div class="row-between"><div class="muted" style="font-size:11.5px">${l?'Created: '+new Date(l.createdAt||Date.now()).toLocaleString():'New lead will be added to your pipeline'}</div>
-    <div style="display:flex;gap:8px"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveLead('${id||''}')">💾 Save Lead</button></div></div>
+    <div class="row-between">
+      <div class="muted" style="font-size:11.5px">${l?'Created: '+new Date(l.createdAt||Date.now()).toLocaleString():'New lead will be added to your pipeline'}</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn" onclick="closeModal()">Cancel</button>
+        <button class="btn primary" onclick="saveLead('${id||''}')">💾 Save Lead</button>
+      </div>
+    </div>
   `,{title: l?'✏️ Edit Lead':'＋ Add New Lead', wide:true});
 }
 
