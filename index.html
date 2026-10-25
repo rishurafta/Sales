@@ -890,67 +890,54 @@ async function importMapped(silent){
   if(!u.map.name && !u.map.mobile){ toast('Map at least Name or Mobile column','err'); return; }
   
   const btn = document.querySelector('#mapArea .btn.primary');
-  if(btn){ btn.disabled = true; btn.textContent = "Preparing to upload..."; }
+  if(btn){ btn.disabled = true; btn.textContent = "Preparing..."; }
 
   let added=0, skipped=0, updated=0;
   let newLeads = [];
   
-  // 1. Local array banayein (fast processing)
   u.rows.forEach(r=>{
-    const lead=rowToLead(r,u);
+    const lead = rowToLead(r,u);
     if(!lead.name && !lead.mobile){ skipped++; return; }
-    // Purani lead dhundo
-const existIdx = DB.leads.findIndex(x => x.mobile && x.mobile === lead.mobile);
-if(existIdx > -1) {
-    lead.id = DB.leads[existIdx].id; // Purani ID rakho
-    DB.leads[existIdx] = lead;       // Purani lead ko naye data se replace karo
-    updated++;
-} else {
-    DB.leads.push(lead);             // Nayi lead push karo
-    added++;
-}
-newLeads.push(lead);
-    DB.leads.push(lead); 
+    
+    // 🔥 Purani lead dhundo mobile number se
+    const existIdx = DB.leads.findIndex(x => x.mobile && x.mobile === lead.mobile);
+    
+    if(existIdx > -1) {
+      // Agar pehle se hai, toh ID same rakho aur naya data daalo
+      lead.id = DB.leads[existIdx].id; 
+      DB.leads[existIdx] = lead;
+      updated++;
+    } else {
+      // Nayi lead hai
+      DB.leads.push(lead);
+      added++;
+    }
+    
     newLeads.push(lead); 
-    added++;
   });
   
-  // 2. Cloud par bhejein
   if(newLeads.length > 0) {
     if(btn) btn.textContent = `Uploading ${newLeads.length} leads...`;
-    
     try {
       const res = await fetch(`${API_URL}/api/leads/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newLeads) 
       });
-      
       if(!res.ok) {
         const errData = await res.json();
         throw new Error(errData.error || `Server error: ${res.status}`);
       }
-
-      toast(`Success! ${added} leads uploaded to cloud.`, 'ok');
-
     } catch(err) {
       console.error('Upload failed:', err);
       toast('Upload failed: ' + err.message, 'err');
-      
-      // 🔥 Agar Cloud me save nahi hua, toh local se bhi hata dein, taaki refresh par 0 hi dikhein
-      const addedIds = new Set(newLeads.map(l => l.id));
-      DB.leads = DB.leads.filter(l => !addedIds.has(l.id));
-      
       if(btn) { btn.disabled = false; btn.textContent = "Retry Import"; }
-      return; 
+      return;
     }
-  } else {
-    toast('All rows skipped (duplicate or empty).', 'info');
   }
   
   updateTopbar();
-  
-  if(!silent){ toast(`Imported: ${added} | Skipped: ${skipped}`,'ok'); }
+  if(!silent){ toast(`Success! Added: ${added}, Updated: ${updated}, Skipped: ${skipped}`,'ok'); }
   UI.upload=null; const area=$('#mapArea'); if(area) area.innerHTML='';
   if(UI.page==='uploads') RENDER.uploads(); else if(UI.page==='leads') RENDER.leads();
 }
