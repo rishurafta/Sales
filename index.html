@@ -11,7 +11,6 @@
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 <style>
-/* [SAME CSS AS BEFORE] */
 :root{
   --bg:#0b0e1a; --bg2:#121629; --card:#161b30; --card2:#1c2239;
   --text:#e9edfa; --muted:#8d95b5; --border:#262d4a;
@@ -295,13 +294,12 @@ function addDays(ds,n){ const d=new Date(ds+'T00:00:00'); d.setDate(d.getDate()+
 function prettyDate(s){ if(!s) return '—'; const p=String(s).split('-'); return p.length===3?`${p[2]}-${p[1]}-${p[0]}`:s; }
 
 /* =====================================================================
-   ⚠️ FIREBASE SETUP: Replace the values below with your own Firebase config
+   ⚠️ FIREBASE SETUP
    ===================================================================== */
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
   apiKey: "AIzaSyCQuQOuXCtox5bmSllafwyDE-FsVBmFh_8",
   authDomain: "crm-system-55a36.firebaseapp.com",
-  databaseURL: "https://crm-system-55a36-default-rtdb.firebaseio.com/", // 
+  databaseURL: "https://crm-system-55a36-default-rtdb.firebaseio.com/",
   projectId: "crm-system-55a36",
   storageBucket: "crm-system-55a36.firebasestorage.app",
   messagingSenderId: "325701562402",
@@ -467,7 +465,7 @@ let UI = {
   page:'dashboard',
   dashPeriod:'monthly', dashFrom:'', dashTo:'', dashUser:'all',
   reportPeriod:'monthly', reportFrom:'', reportTo:'', reportUser:'all', reportTag:'all',
-  leadSearch:'', leadTag:'all', leadUser:'all',
+  leadSearch:'', leadTag:'all', leadUser:'all', selectedLeads:new Set(),
   upload:null, msg:null
 };
 let DASH_LISTS = {};
@@ -548,12 +546,10 @@ async function boot() {
   ensurePerms();
   applyTheme();
   
-  // Listen for real-time updates from other users
   if (isFirebaseReady) {
     db.ref('crm').on('value', snap => {
       const live = snap.val();
       if (!live) return;
-      // Avoid overwriting local state mid-edit
       if ($('#modalRoot').innerHTML !== '') return;
       DB = live;
       if (DB.settings.currentUserId && document.getElementById('mainApp').classList.contains('show')) {
@@ -563,7 +559,6 @@ async function boot() {
     });
   }
   
-  // Show login or dashboard
   if (DB.settings.currentUserId && DB.users.some(u=>u.id===DB.settings.currentUserId)) {
     $('#loginScreen').style.display = 'none';
     $('#mainApp').classList.add('show');
@@ -623,7 +618,6 @@ function filterLeads({from,to,user}={}){
     const ed=l.entryDate||today();
     if(from && ed<from) return false;
     if(to && ed>to) return false;
-    // NO PRIVACY: All users can see ALL leads
     if(user && user!=='all' && l.assignedTo!==user) return false;
     return true;
   });
@@ -946,7 +940,7 @@ function startAutoSync(){ stopAutoSync(); autoSyncTimer=setInterval(()=>fetchShe
 function stopAutoSync(){ if(autoSyncTimer){ clearInterval(autoSyncTimer); autoSyncTimer=null; } }
 
 /* =====================================================================
-   REPORTS (Same as before)
+   REPORTS
    ===================================================================== */
 RENDER.reports = function(){
   if(!can('reports')){ $('#page-reports').innerHTML=`<div class="empty">Access denied</div>`; return; }
@@ -1021,17 +1015,20 @@ function downloadReport(){
 }
 
 /* =====================================================================
-   LEADS (Admin & Sales all see ALL data)
+   LEADS (With Bulk Delete & Selection)
    ===================================================================== */
 RENDER.leads = function(){
   if(!can('leads')){ $('#page-leads').innerHTML=`<div class="empty">Access denied</div>`; return; }
   const cols=DB.columns.filter(c=>c.visible);
   let leads=filterLeads({from:'0000-01-01', to:'9999-12-31'});
+  
   const q=UI.leadSearch.toLowerCase().trim();
   if(q) leads=leads.filter(l=>['name','mobile','shopName','city','state','leadSource','remarks'].some(k=>String(l[k]||'').toLowerCase().includes(q)));
   if(UI.leadTag!=='all') leads=leads.filter(l=>l.tagging===UI.leadTag);
   if(UI.leadUser && UI.leadUser!=='all') leads=leads.filter(l=>l.assignedTo===UI.leadUser);
+  
   leads.sort((a,b)=>(b.entryDate||'').localeCompare(a.entryDate||''));
+
   const cell=(l,c)=>{
     const v=l[c.key];
     if(c.key==='tagging') return `<span class="tag ${esc(v||'default')}">${esc(v||'—')}</span>`;
@@ -1041,6 +1038,9 @@ RENDER.leads = function(){
     if(c.key==='remarks') return `<span title="${esc(v||'')}">${esc(String(v||'—').slice(0,34))}${String(v||'').length>34?'…':''}</span>`;
     return esc(v??'—') || '—';
   };
+
+  const allChecked = leads.length > 0 && leads.every(l => UI.selectedLeads.has(l.id));
+
   $('#page-leads').innerHTML=`
   <div class="page-head">
     <div><h1>Leads</h1><p class="muted">${leads.length} leads — All users can view all data</p></div>
@@ -1051,20 +1051,69 @@ RENDER.leads = function(){
       <button class="btn" onclick="openColumnSettings()">⚙️ Columns</button>
       <button class="btn primary" onclick="editLead()">＋ Add Lead</button>
       <button class="btn" onclick="exportLeads()">⬇ Export</button>
+      ${UI.selectedLeads.size > 0 ? `<button class="btn danger" onclick="bulkDeleteLeads()">🗑 Delete Selected (${UI.selectedLeads.size})</button>` : ''}
     </div>
   </div>
   <div class="card">
     <div class="tbl-wrap" style="max-height:calc(100vh - 250px)">
       <table>
-        <thead><tr>${cols.map(c=>`<th>${esc(c.label)}</th>`).join('')}<th>Assigned</th><th style="text-align:right">Actions</th></tr></thead>
-        <tbody>${leads.length?leads.map(l=>`<tr>${cols.map(c=>`<td>${cell(l,c)}</td>`).join('')}<td>${esc(userName(l.assignedTo))}</td><td style="text-align:right;white-space:nowrap">
-          <button class="btn sm" title="Edit" onclick="editLead('${l.id}')">✏️</button>
-          <button class="btn sm" title="Send Message" onclick="sendMessage('${l.id}')">💬</button>
-          <button class="btn sm danger" title="Delete" onclick="deleteLead('${l.id}')">🗑</button></td></tr>`).join(''):`<tr><td colspan="${cols.length+2}" class="empty">No leads found</td></tr>`}</tbody>
+        <thead>
+          <tr>
+            <th style="width:40px"><input type="checkbox" onchange="toggleSelectAllLeads(this.checked)" ${allChecked?'checked':''} style="width:auto;cursor:pointer"></th>
+            ${cols.map(c=>`<th>${esc(c.label)}</th>`).join('')}
+            <th>Assigned</th>
+            <th style="text-align:right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${leads.length?leads.map(l=>`<tr>
+            <td><input type="checkbox" value="${l.id}" ${UI.selectedLeads.has(l.id)?'checked':''} onchange="toggleSelectLead('${l.id}', this.checked)" style="width:auto;cursor:pointer"></td>
+            ${cols.map(c=>`<td>${cell(l,c)}</td>`).join('')}
+            <td>${esc(userName(l.assignedTo))}</td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="btn sm" title="Edit" onclick="editLead('${l.id}')">✏️</button>
+              <button class="btn sm" title="Send Message" onclick="sendMessage('${l.id}')">💬</button>
+              <button class="btn sm danger" title="Delete" onclick="deleteLead('${l.id}')">🗑</button>
+            </td>
+          </tr>`).join(''):`<tr><td colspan="${cols.length+3}" class="empty">No leads found</td></tr>`}
+        </tbody>
       </table>
     </div>
   </div>`;
 };
+
+function toggleSelectLead(id, checked) {
+  if (checked) UI.selectedLeads.add(id);
+  else UI.selectedLeads.delete(id);
+  RENDER.leads();
+}
+
+function toggleSelectAllLeads(checked) {
+  const cols = DB.columns.filter(c=>c.visible);
+  let leads = filterLeads({from:'0000-01-01', to:'9999-12-31'});
+  const q = UI.leadSearch.toLowerCase().trim();
+  if(q) leads=leads.filter(l=>['name','mobile','shopName','city','state','leadSource','remarks'].some(k=>String(l[k]||'').toLowerCase().includes(q)));
+  if(UI.leadTag!=='all') leads=leads.filter(l=>l.tagging===UI.leadTag);
+  if(UI.leadUser && UI.leadUser!=='all') leads=leads.filter(l=>l.assignedTo===UI.leadUser);
+
+  if (checked) leads.forEach(l => UI.selectedLeads.add(l.id));
+  else leads.forEach(l => UI.selectedLeads.delete(l.id));
+  RENDER.leads();
+}
+
+async function bulkDeleteLeads() {
+  const count = UI.selectedLeads.size;
+  if (count === 0) return;
+  if (!confirm(`Are you sure you want to permanently delete ${count} selected lead(s)?`)) return;
+  
+  DB.leads = DB.leads.filter(l => !UI.selectedLeads.has(l.id));
+  UI.selectedLeads.clear();
+  
+  await saveAll();
+  updateTopbar();
+  RENDER.leads();
+  toast(`${count} leads deleted successfully`, 'ok');
+}
 
 function openColumnSettings(){
   openModal(`
@@ -1146,7 +1195,9 @@ function saveLead(id){
 function deleteLead(id){
   const l=DB.leads.find(x=>x.id===id); if(!l) return;
   if(!confirm(`Delete lead "${l.name||l.mobile}"? This cannot be undone.`)) return;
-  DB.leads=DB.leads.filter(x=>x.id!==id); saveAll(); updateTopbar(); RENDER[UI.page]&&RENDER[UI.page](); toast('Lead deleted','ok');
+  DB.leads=DB.leads.filter(x=>x.id!==id);
+  UI.selectedLeads.delete(id);
+  saveAll(); updateTopbar(); RENDER[UI.page]&&RENDER[UI.page](); toast('Lead deleted','ok');
 }
 
 function sendMessage(leadId){
@@ -1422,7 +1473,7 @@ window.addEventListener('keydown',e=>{
   if(e.key==='Enter' && $('#loginScreen')?.style.display !== 'none') doLogin();
 });
 </script>
-  <script>
+<script>
   // Disable right-click context menu
   document.addEventListener('contextmenu', function (e) {
     e.preventDefault();
