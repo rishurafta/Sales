@@ -511,13 +511,27 @@ async function fetchLeads() {
         };
       });
 
+      // 1. Settings load karein
       if(data.settings) DB.settings = { ...DB.settings, ...data.settings };
+      
+      // 2. Users load karein
       if(data.users && data.users.length > 0) DB.users = data.users;
       
-      if(data.columns && data.columns.length > 0) DB.columns = data.columns;
-      else DB.columns = JSON.parse(JSON.stringify(DEFAULT_COLUMNS));
+      // 3. 🔥 Tags load karein (Cloud se aaye hue tags ko use karein)
+      if(data.settings && data.settings.tags && data.settings.tags.length > 0) {
+        DB.tags = data.settings.tags;
+      } else if(data.tags && data.tags.length > 0) {
+        DB.tags = data.tags;
+      } else if(!DB.tags || DB.tags.length === 0) {
+        DB.tags = DEFAULT_TAGS.slice(); // Fallback
+      }
       
-      if(!DB.tags || DB.tags.length === 0) DB.tags = DEFAULT_TAGS.slice();
+      // 4. Columns load karein
+      if(data.columns && data.columns.length > 0) {
+        DB.columns = data.columns;
+      } else {
+        DB.columns = JSON.parse(JSON.stringify(DEFAULT_COLUMNS));
+      }
 
       console.log('✅ Leads fetched:', DB.leads.length, '| Users:', DB.users.length);
     }
