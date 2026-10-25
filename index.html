@@ -272,6 +272,9 @@ tbody tr:hover td { background: rgba(99,102,241,.09) !important; }
       <input id="loginPass" type="password" placeholder="Enter password">
     </div>
     <button class="btn primary" style="width:100%;padding:12px" onclick="doLogin()">Sign In →</button>
+    <div style="margin-top:16px; font-size:11px; color:var(--muted)">
+      <a href="#" onclick="clearLocalAndReload()" style="color:var(--primary)">Clear Cache & Sync Fresh Data</a>
+    </div>
   </div>
 </div>
 
@@ -477,6 +480,7 @@ function ensurePerms(){
   if(dirty) saveLocal();
 }
 
+// FORCE CLOUD LOAD ON BOOT
 async function fetchLeads() {
   try {
     const res = await fetch(`${API_URL}/api/leads`);
@@ -490,8 +494,19 @@ async function fetchLeads() {
   } catch(e) { console.error('Failed to load data', e); }
 }
 
+// Clear local cache and reload (Button on Login Screen)
+function clearLocalAndReload() {
+  if(confirm('This will clear your local cache and load fresh data from cloud. Continue?')) {
+    localStorage.removeItem(LS_KEY);
+    location.reload();
+  }
+}
+
 async function boot() {
+  // Always fetch fresh data from Cloud FIRST
   await fetchLeads();
+  
+  // Then apply local settings
   ensurePerms();
   applyTheme();
   
