@@ -893,7 +893,7 @@ async function importMapped(silent){
     added++;
   });
   
-  // 2. Sabhi leads ek saath Cloud par bhej dein (Worker isko handle kar lega)
+  // 2. Cloud par bhejein
   if(newLeads.length > 0) {
     if(btn) btn.textContent = `Uploading ${newLeads.length} leads...`;
     
@@ -905,19 +905,30 @@ async function importMapped(silent){
       });
       
       if(!res.ok) {
-        throw new Error(`Server error: ${res.status}`);
+        const errData = await res.json();
+        throw new Error(errData.error || `Server error: ${res.status}`);
       }
+
+      toast(`Success! ${added} leads uploaded to cloud.`, 'ok');
+
     } catch(err) {
-      toast('Bulk upload failed. Check internet.', 'err');
       console.error('Upload failed:', err);
+      toast('Upload failed: ' + err.message, 'err');
+      
+      // 🔥 Agar Cloud me save nahi hua, toh local se bhi hata dein, taaki refresh par 0 hi dikhein
+      const addedIds = new Set(newLeads.map(l => l.id));
+      DB.leads = DB.leads.filter(l => !addedIds.has(l.id));
+      
       if(btn) { btn.disabled = false; btn.textContent = "Retry Import"; }
-      return; // Stop if failed
+      return; 
     }
+  } else {
+    toast('All rows skipped (duplicate or empty).', 'info');
   }
   
   updateTopbar();
   
-  if(!silent){ toast(`Fast Import: ${added} leads uploaded! (${skipped} skipped)`,'ok'); }
+  if(!silent){ toast(`Imported: ${added} | Skipped: ${skipped}`,'ok'); }
   UI.upload=null; const area=$('#mapArea'); if(area) area.innerHTML='';
   if(UI.page==='uploads') RENDER.uploads(); else if(UI.page==='leads') RENDER.leads();
 }
