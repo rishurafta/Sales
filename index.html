@@ -125,16 +125,24 @@ label.fld{display:block;font-size:11px;font-weight:700;color:var(--muted);text-t
 .stat .ico{font-size:19px;margin-bottom:9px}
 .stat .num{font-size:27px;font-weight:800;letter-spacing:-1px;line-height:1}
 .stat .lbl{font-size:11.5px;color:var(--muted);margin-top:6px;font-weight:600;letter-spacing:.2px}
-.tbl-wrap{overflow:auto;border-radius:12px;border:1px solid var(--border);max-height:560px}
-table{width:100%;border-collapse:collapse;font-size:12.5px;min-width:640px}
+
+/* === UPDATED TABLE CSS FOR STICKY ACTIONS === */
+.tbl-wrap{overflow:auto;border-radius:12px;border:1px solid var(--border);max-height:calc(100vh - 250px)}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;min-width:640px}
 thead th{
-  position:sticky;top:0;z-index:2;background:var(--bg2);text-align:left;padding:11px 12px;
+  position:sticky;top:0;z-index:10;background:var(--bg2);text-align:left;padding:11px 12px;
   font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:800;
   border-bottom:1px solid var(--border);white-space:nowrap;
 }
-tbody td{padding:10px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
-tbody tr:hover{background:rgba(99,102,241,.09)}
-tbody tr:last-child td{border-bottom:0}
+tbody td{padding:10px 12px;border-bottom:1px solid var(--border);white-space:nowrap;background:var(--bg)}
+tbody tr:hover td{background:rgba(99,102,241,.09)}
+
+/* Sticky Columns */
+th:nth-child(1), td:nth-child(1) { position:sticky; left:0; z-index:5; background:var(--bg2); border-right:1px solid var(--border); width:40px; }
+th:last-child, td:last-child { position:sticky; right:0; z-index:5; background:var(--bg2); border-left:1px solid var(--border); text-align:right; }
+
+thead th:nth-child(1), thead th:last-child { z-index: 11; }
+
 .empty{padding:34px;text-align:center;color:var(--muted);font-size:13px}
 .tag{display:inline-block;padding:3px 9px;border-radius:20px;font-size:10.5px;font-weight:800;letter-spacing:.2px}
 .tag.Hot{background:rgba(239,68,68,.17);color:#f87171}
@@ -705,7 +713,6 @@ function handleFile(file){
 
 function autoMap(headers){
   const map={};
-  // Yahan hum DB.columns use kar rahe hain, taaki naye columns bhi map ho sakein
   DB.columns.forEach(f=>{
     const norm=s=>String(s).toLowerCase().replace(/[^a-z0-9]/g,'');
     const target=norm(f.label);
@@ -719,7 +726,6 @@ function renderMapping(){
   const u=UI.upload;
   if(!u){ const a=$('#mapArea'); if(a) a.innerHTML=''; return; }
   
-  // Yahan hum DB.columns use kar rahe hain taaki sabhi fields dikhein
   const cols = DB.columns.filter(c => c.visible);
   
   $('#mapArea').innerHTML=`
@@ -747,7 +753,6 @@ function rowToLead(row,u){
     id:uid('ld'), createdAt:Date.now()
   };
   
-  // Yahan bhi hum DB.columns se loop kar rahe hain
   DB.columns.forEach(c => {
     let val = get(c.key);
     if(c.type === 'date') val = toDate(val) || (c.key==='entryDate'? today() : '');
@@ -756,7 +761,6 @@ function rowToLead(row,u){
     lead[c.key] = val;
   });
   
-  // Fallback validations
   if(!lead.entryDate) lead.entryDate = today();
   if(!lead.tagging) lead.tagging = 'Hot';
   if(!lead.assignedTo) lead.assignedTo = DB.settings.currentUserId;
@@ -776,7 +780,6 @@ async function importMapped(silent){
   u.rows.forEach(r=>{
     const lead=rowToLead(r,u);
     if(!lead.name && !lead.mobile){ skipped++; return; }
-    // Duplicate check
     if(lead.mobile && DB.leads.some(x=>x.mobile===lead.mobile)){ skipped++; return; }
     DB.leads.push(lead); 
     newLeads.push(lead); 
@@ -784,12 +787,11 @@ async function importMapped(silent){
   });
   
   if(newLeads.length > 0) {
-    // BULK INSERT: Send all new leads at once to Cloudflare
     try {
       await fetch(`${API_URL}/api/leads`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newLeads) // Sending an Array
+        body: JSON.stringify(newLeads) 
       });
     } catch(err) {
       toast('Bulk import failed. Check internet.', 'err');
@@ -953,11 +955,11 @@ RENDER.leads = function(){
     </div>
   </div>
   <div class="card">
-    <div class="tbl-wrap" style="max-height:calc(100vh - 250px)">
+    <div class="tbl-wrap">
       <table>
         <thead>
           <tr>
-            <th style="width:40px"><input type="checkbox" onchange="toggleSelectAllLeads(this.checked)" ${allChecked?'checked':''} style="width:auto;cursor:pointer"></th>
+            <th><input type="checkbox" onchange="toggleSelectAllLeads(this.checked)" ${allChecked?'checked':''} style="width:auto;cursor:pointer"></th>
             ${cols.map(c=>`<th>${esc(c.label)}</th>`).join('')}
             <th>Assigned</th>
             <th style="text-align:right">Actions</th>
