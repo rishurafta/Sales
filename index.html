@@ -372,7 +372,6 @@ function ph(label,c1,c2){
   return 'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg);
 }
 
-// Fallback data for Users, Products, Staff (saved in LocalStorage)
 const LS_KEY = 'tyro_crm_local_v2';
 
 function loadLocal() {
@@ -408,7 +407,6 @@ async function saveLocal() {
   const localDB = { settings: DB.settings, users: DB.users, columns: DB.columns, products: DB.products, staff: DB.staff };
   localStorage.setItem(LS_KEY, JSON.stringify(localDB));
 
-  // Sync to Cloud
   try {
     await fetch(`${API_URL}/api/sync`, {
       method: 'POST',
@@ -423,7 +421,7 @@ async function saveLocal() {
 }
 
 let DB = loadLocal();
-DB.leads = []; // Will be populated from Cloudflare
+DB.leads = [];
 
 let UI = {
   page:'dashboard',
@@ -481,7 +479,6 @@ function ensurePerms(){
   if(dirty) saveLocal();
 }
 
-// FORCE CLOUD LOAD ON BOOT
 async function fetchLeads() {
   try {
     const res = await fetch(`${API_URL}/api/leads`);
@@ -489,14 +486,22 @@ async function fetchLeads() {
       const data = await res.json();
       
       DB.leads = (data.leads || []).map(l => {
-        // 🔥 Custom Data ko nikal kar lead object mein merge karein
         let finalLead = { ...l };
+        
+        // 🔥 Custom Data ko merge karein
         try {
           if (l.customData && l.customData !== '{}' && l.customData !== 'null') {
-            const custom = JSON.parse(l.customData);
+            const custom = typeof l.customData === 'string' ? JSON.parse(l.customData) : l.customData;
             finalLead = { ...finalLead, ...custom }; 
           }
         } catch(e) { console.error("Custom data parse error", e); }
+
+        // 🔥 Tagging History format karein
+        try {
+          if (typeof l.taggingHistory === 'string') {
+            finalLead.taggingHistory = JSON.parse(l.taggingHistory || '[]');
+          }
+        } catch(e) { console.error("Tagging history parse error", e); }
 
         return {
           ...finalLead,
@@ -518,7 +523,6 @@ async function fetchLeads() {
   } catch(e) { console.error('❌ Failed to load data', e); }
 }
 
-// 🔥 NEW: Dedicated users fetch (backup sync)
 async function fetchUsers() {
   try {
     const res = await fetch(`${API_URL}/api/users`);
@@ -538,7 +542,6 @@ async function fetchUsers() {
   }
 }
 
-// Clear local cache and reload (Button on Login Screen)
 function clearLocalAndReload() {
   if(confirm('This will clear your local cache and log you out. Continue?')) {
     localStorage.removeItem(LS_KEY);
@@ -550,22 +553,18 @@ function clearLocalAndReload() {
 }
 
 async function boot() {
-  // 1. Cloud se fresh data load karein
   await fetchLeads();
   await fetchUsers();        
   await fetchUsers();        
   
-  // 2. Permissions aur Theme apply karein
   ensurePerms();
   applyTheme();
   
-  // 🔥 3. Agar URL mein logout=true hai, toh current user clear karein
   if(window.location.search.includes('logout=true')) {
     DB.settings.currentUserId = null;
     saveLocal();
   }
 
-  // 4. Check karein ki koi logged in hai ya nahi
   if (DB.settings.currentUserId && DB.users.some(u=>u.id===DB.settings.currentUserId)) {
     $('#loginScreen').style.display = 'none';
     $('#mainApp').classList.add('show');
@@ -580,7 +579,6 @@ function doLogin(){
   const id = $('#loginId').value.trim().toLowerCase();
   const pass = $('#loginPass').value;
   
-  // 🔥 Null-safe check — agar email ya name khali ho toh crash nahi hoga
   const user = DB.users.find(u =>
     ((u.email || '').toLowerCase() === id || (u.name || '').toLowerCase() === id) &&
     u.password === pass
@@ -871,10 +869,10 @@ function rowToLead(row,u){
   };
   
   const lead = {
-    id:uid('ld'), createdAt:Date.now(), remarksHistory:[], customData:{}
+    id:uid('ld'), createdAt:Date.now(), remarksHistory:[], taggingHistory:[], customData:{}
   };
   
-  const baseKeys = ['id','leadSource','entryDate','mobile','name','city','state','shopName','orderAmount','orderQty','tagging','followUpDate','visitDate','remarks','remarksHistory','assignedTo','createdAt','customData'];
+  const baseKeys = ['id','leadSource','entryDate','mobile','name','city','state','shopName','orderAmount','orderQty','tagging','followUpDate','visitDate','remarks','remarksHistory','assignedTo','createdAt','customData','taggingHistory'];
 
   DB.columns.forEach(c => {
     let val = get(c.key);
@@ -901,8 +899,18 @@ function rowToLead(row,u){
     });
   }
 
+  // 🔥 Nayi lead ki pehli tagging history
+  if(lead.tagging) {
+    lead.taggingHistory.push({
+      oldTag: '—',
+      newTag: lead.tagging,
+      date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+    });
+  }
+
   return lead;
 }
+
 async function importMapped(silent){
   const u=UI.upload; if(!u) return;
   if(!u.map.name && !u.map.mobile){ toast('Map at least Name or Mobile column','err'); return; }
@@ -917,16 +925,13 @@ async function importMapped(silent){
     const lead = rowToLead(r,u);
     if(!lead.name && !lead.mobile){ skipped++; return; }
     
-    // 🔥 Purani lead dhundo mobile number se
     const existIdx = DB.leads.findIndex(x => x.mobile && x.mobile === lead.mobile);
     
     if(existIdx > -1) {
-      // Agar pehle se hai, toh ID same rakho aur naya data daalo
       lead.id = DB.leads[existIdx].id; 
       DB.leads[existIdx] = lead;
       updated++;
     } else {
-      // Nayi lead hai
       DB.leads.push(lead);
       added++;
     }
@@ -1073,7 +1078,6 @@ function downloadReport(){
 RENDER.leads = function(){
   if(!can('leads')){ $('#page-leads').innerHTML=`<div class="empty">Access denied</div>`; return; }
   
-  // 🔥 Safety Check
   if(!DB.columns || DB.columns.length === 0) DB.columns = JSON.parse(JSON.stringify(DEFAULT_COLUMNS));
   
   const cols=DB.columns.filter(c=>c.visible);
@@ -1399,7 +1403,7 @@ async function saveLead(id){
         ...data, 
         customData: finalCustomData, 
         remarksHistory: remarksHistory,
-        taggingHistory: tagHistory // 🔥 Add Tag History
+        taggingHistory: tagHistory
       };
       
       Object.assign(updatedLead, finalCustomData);
@@ -1596,7 +1600,6 @@ function verifyAdminPass(callback) {
 }
 
 RENDER.settings = function(){
-  // 🔥 Safety Check for Columns & Tags
   if(!DB.columns || DB.columns.length === 0) DB.columns = JSON.parse(JSON.stringify(DEFAULT_COLUMNS));
   if(!DB.tags || DB.tags.length === 0) DB.tags = DEFAULT_TAGS.slice();
 
@@ -1686,7 +1689,6 @@ async function saveUser(id){
     DB.users.push(newUser); 
   }
   
-  // 🔥 Save to Cloud Database — with proper error check
   try {
     const res = await fetch(`${API_URL}/api/sync-users`, {
       method: 'POST',
@@ -1713,7 +1715,6 @@ async function deleteUser(id){
   
   DB.leads.forEach(l=>{ if(l.assignedTo===id) l.assignedTo=fallback; });
   
-  // 🔥 Delete from Cloud Database — with proper error check
   try {
     const res = await fetch(`${API_URL}/api/sync-users`, {
       method: 'POST',
