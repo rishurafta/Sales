@@ -489,19 +489,19 @@ async function fetchLeads() {
       const data = await res.json();
       
       DB.leads = (data.leads || []).map(l => {
-        // 🔥 Custom Data (naye columns) ko wapas se lead ke andar daalein
-        let parsed = l;
+        // 🔥 Custom Data ko nikal kar lead object mein merge karein
+        let finalLead = { ...l };
         try {
-          if (l.customData && l.customData !== '{}') {
+          if (l.customData && l.customData !== '{}' && l.customData !== 'null') {
             const custom = JSON.parse(l.customData);
-            parsed = { ...l, ...custom }; 
+            finalLead = { ...finalLead, ...custom }; 
           }
         } catch(e) { console.error("Custom data parse error", e); }
 
         return {
-          ...parsed,
-          orderAmount: Number(parsed.orderAmount),
-          orderQty: Number(parsed.orderQty)
+          ...finalLead,
+          orderAmount: Number(finalLead.orderAmount),
+          orderQty: Number(finalLead.orderQty)
         };
       });
 
@@ -539,11 +539,9 @@ async function fetchUsers() {
 }
 
 // Clear local cache and reload (Button on Login Screen)
-
-  function clearLocalAndReload() {
+function clearLocalAndReload() {
   if(confirm('This will clear your local cache and log you out. Continue?')) {
     localStorage.removeItem(LS_KEY);
-    // 🔥 Ye line add karein taaki current user reset ho jaye
     if (typeof DB !== 'undefined' && DB.settings) {
       DB.settings.currentUserId = null;
     }
@@ -876,7 +874,6 @@ function rowToLead(row,u){
     id:uid('ld'), createdAt:Date.now(), remarksHistory:[], customData:{}
   };
   
-  // Base fields (jo database table mein hain)
   const baseKeys = ['id','leadSource','entryDate','mobile','name','city','state','shopName','orderAmount','orderQty','tagging','followUpDate','visitDate','remarks','remarksHistory','assignedTo','createdAt','customData'];
 
   DB.columns.forEach(c => {
@@ -1317,8 +1314,18 @@ function openRemarksHistory(id) {
 }
 
 async function saveLead(id){
-  const form=$('.modal-body'); const data={};
-  $$('input,select,textarea',form).forEach(el=>{ if(el.name && !el.disabled) data[el.name]=el.value; });
+  const form=$('.modal-body'); const data={}; const customData={};
+  $$('input,select,textarea',form).forEach(el=>{ 
+    if(el.name && !el.disabled) {
+      // 🔥 Agar custom column hai toh customData mein daalo
+      if(!BASE_FIELDS.some(b => b.key === el.name)) {
+        customData[el.name] = el.value;
+      } else {
+        data[el.name]=el.value; 
+      }
+    }
+  });
+  
   if(!data.assignedTo) data.assignedTo = DB.settings.currentUserId;
   data.orderAmount=Number(data.orderAmount)||0; data.orderQty=Number(data.orderQty)||0;
   if(!data.name && !data.mobile){ toast('Name or Mobile is required','err'); return; }
@@ -1328,6 +1335,7 @@ async function saveLead(id){
     const idx=DB.leads.findIndex(x=>x.id===id); 
     if(idx>-1) {
       const oldLead = DB.leads[idx];
+      const oldCustom = oldLead.customData || {};
       
       let history = oldLead.remarksHistory || [];
       if (data.remarks && data.remarks.trim() !== '' && data.remarks !== oldLead.remarks) {
@@ -1337,7 +1345,15 @@ async function saveLead(id){
         });
       }
       
-      DB.leads[idx]=Object.assign(DB.leads[idx],data, { remarksHistory: history }); 
+      const finalCustomData = { ...oldCustom, ...customData };
+      
+      // Merge into existing lead
+      const updatedLead = { ...oldLead, ...data, customData: finalCustomData, remarksHistory: history };
+      // Copy custom fields to root for UI display
+      Object.assign(updatedLead, finalCustomData);
+      
+      DB.leads[idx] = updatedLead; 
+      
       await fetch(`${API_URL}/api/leads/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1347,7 +1363,10 @@ async function saveLead(id){
     toast('Lead updated successfully','ok'); 
   }
   else { 
-    const newLead = Object.assign({id:uid('ld'),createdAt:Date.now(),remarksHistory:[]},data);
+    const newLead = Object.assign({id:uid('ld'),createdAt:Date.now(),remarksHistory:[], customData: customData}, data);
+    
+    // Copy custom fields to root for UI display
+    Object.assign(newLead, customData);
     
     if (newLead.remarks && newLead.remarks.trim() !== '') {
       newLead.remarksHistory.push({
