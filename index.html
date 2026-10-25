@@ -892,14 +892,24 @@ async function importMapped(silent){
   const btn = document.querySelector('#mapArea .btn.primary');
   if(btn){ btn.disabled = true; btn.textContent = "Preparing to upload..."; }
 
-  let added=0, skipped=0;
+  let added=0, skipped=0, updated=0;
   let newLeads = [];
   
   // 1. Local array banayein (fast processing)
   u.rows.forEach(r=>{
     const lead=rowToLead(r,u);
     if(!lead.name && !lead.mobile){ skipped++; return; }
-    if(lead.mobile && DB.leads.some(x=>x.mobile===lead.mobile)){ skipped++; return; }
+    // Purani lead dhundo
+const existIdx = DB.leads.findIndex(x => x.mobile && x.mobile === lead.mobile);
+if(existIdx > -1) {
+    lead.id = DB.leads[existIdx].id; // Purani ID rakho
+    DB.leads[existIdx] = lead;       // Purani lead ko naye data se replace karo
+    updated++;
+} else {
+    DB.leads.push(lead);             // Nayi lead push karo
+    added++;
+}
+newLeads.push(lead);
     DB.leads.push(lead); 
     newLeads.push(lead); 
     added++;
