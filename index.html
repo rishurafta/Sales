@@ -984,22 +984,34 @@ async function bulkDeleteLeads() {
   if (count === 0) return;
   if (!confirm(`Are you sure you want to permanently delete ${count} selected lead(s)?`)) return;
   
-  for(const id of UI.selectedLeads){
+  // Button ko loading state me daalein
+  const btn = document.querySelector('.btn.danger'); // Aapka delete button
+  if(btn) { btn.disabled = true; btn.textContent = "Deleting..."; }
+  
+  const idsToDelete = Array.from(UI.selectedLeads);
+  
+  try {
+    // BULK DELETE: Send all IDs at once to Cloudflare
     await fetch(`${API_URL}/api/leads/delete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id })
+      body: JSON.stringify(idsToDelete)
     });
+    
+    // UI se hataayein
+    DB.leads = DB.leads.filter(l => !UI.selectedLeads.has(l.id));
+    UI.selectedLeads.clear();
+    
+    updateTopbar();
+    RENDER.leads();
+    toast(`${count} leads deleted successfully`, 'ok');
+  } catch(err) {
+    toast('Delete failed. Check internet.', 'err');
+    console.error(err);
+  } finally {
+    if(btn) { btn.disabled = false; btn.textContent = "🗑 Delete Selected"; }
   }
-  
-  DB.leads = DB.leads.filter(l => !UI.selectedLeads.has(l.id));
-  UI.selectedLeads.clear();
-  
-  updateTopbar();
-  RENDER.leads();
-  toast(`${count} leads deleted successfully`, 'ok');
 }
-
 function openColumnSettings(){
   openModal(`
     <div class="muted" style="font-size:12px;margin-bottom:14px;line-height:1.6">Check the columns you want visible in the Leads table. Reorder with ↑↓. Click <b>Apply &amp; Save</b> to persist.</div>
