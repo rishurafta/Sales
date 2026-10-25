@@ -9,7 +9,6 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <style>
-/* [SAME CSS AS BEFORE] */
 :root{
   --bg:#0b0e1a; --bg2:#121629; --card:#161b30; --card2:#1c2239;
   --text:#e9edfa; --muted:#8d95b5; --border:#262d4a;
@@ -199,7 +198,6 @@ tbody tr:last-child td{border-bottom:0}
 .login-card h2{font-size:22px;font-weight:800;margin-bottom:6px}
 .login-card p{font-size:13px;color:var(--muted);margin-bottom:24px}
 .login-card .fld{text-align:left}
-.demo-box{margin-top:20px;padding:12px;border-radius:10px;background:rgba(99,102,241,.1);font-size:11.5px;color:var(--primary);line-height:1.6;border:1px solid rgba(99,102,241,.2)}
 #toast{position:fixed;bottom:22px;right:22px;z-index:600;display:flex;flex-direction:column;gap:9px}
 .toast{
   padding:12px 17px;border-radius:12px;font-size:12.5px;font-weight:700;color:#fff;
@@ -332,7 +330,7 @@ function ph(label,c1,c2){
 }
 
 // Fallback data for Users, Products, Staff (saved in LocalStorage)
-const LS_KEY = 'tyro_crm_local_v1';
+const LS_KEY = 'tyro_crm_local_v2';
 
 function loadLocal() {
   try {
@@ -436,7 +434,10 @@ function ensurePerms(){
 async function fetchLeads() {
   try {
     const res = await fetch(`${API_URL}/api/leads`);
-    if(res.ok) DB.leads = await res.json();
+    if(res.ok) {
+      const data = await res.json();
+      DB.leads = data.map(l => ({ ...l, orderAmount: Number(l.orderAmount), orderQty: Number(l.orderQty) }));
+    }
   } catch(e) { console.error('Failed to load leads', e); }
 }
 
@@ -538,14 +539,944 @@ function refresh(silent){
   if(RENDER[UI.page]) RENDER[UI.page]();
 }
 
-// ... (Dashboard, Uploads, Reports, Leads, Products, Settings RENDER functions remain same as before)
-// Just replace saveAll() calls with saveLocal() for non-lead data.
+RENDER.dashboard = function(){
+  if(!can('dashboard')){ $('#page-dashboard').innerHTML=`<div class="empty">Access denied</div>`; return; }
+  const {from,to}=periodRange(UI.dashPeriod,UI.dashFrom,UI.dashTo);
+  const leads=filterLeads({from,to,user:UI.dashUser});
+  const t=today();
+  const open=l=>!isClosed(l);
+  const followUps = leads.filter(l=>l.followUpDate && l.followUpDate<=t && open(l)).sort((a,b)=>(a.followUpDate||'').localeCompare(b.followUpDate||''));
+  const visitsToday = leads.filter(l=>l.visitDate===t);
+  const planned = leads.filter(l=>l.visitDate && l.visitDate>t);
+  const junk = leads.filter(l=>l.tagging==='Junk');
+  const purchased = leads.filter(l=>l.tagging==='Purchased');
+  const reminders = leads.filter(l=>l.followUpDate && l.followUpDate>t && l.followUpDate<=addDays(t,7) && open(l));
+  DASH_LISTS={followUps,visitsToday,planned,junk,purchased,reminders,all:leads};
+  const cards=[
+    {k:'followUps', ico:'🔁', num:followUps.length,  lbl:'Follow-up Leads',    c:'var(--warn)'},
+    {k:'visitsToday',ico:'📍', num:visitsToday.length,lbl:'Visiting Today',      c:'var(--accent)'},
+    {k:'planned',    ico:'🗓️', num:planned.length,   lbl:'Visit Planned',       c:'var(--purple)'},
+    {k:'junk',       ico:'🚫', num:junk.length,      lbl:'Junk Leads',          c:'var(--danger)'},
+    {k:'purchased',  ico:'✅', num:purchased.length, lbl:'Purchased',           c:'var(--ok)'},
+    {k:'reminders',  ico:'⏰', num:reminders.length, lbl:'Reminders (7 days)',  c:'var(--primary)'}
+  ];
+  $('#page-dashboard').innerHTML=`
+  <div class="page-head">
+    <div><h1>Dashboard</h1><p class="muted">Hello ${esc(currentUser().name)} — here is the pipeline snapshot</p></div>
+    <div class="filters">
+      <select style="width:auto" onchange="UI.dashPeriod=this.value;RENDER.dashboard()">
+        ${['yesterday','weekly','monthly','custom','all'].map(p=>`<option value="${p}" ${UI.dashPeriod===p?'selected':''}>${{yesterday:'Yesterday',weekly:'Weekly (7 days)',monthly:'Monthly',custom:'Custom Date',all:'All Time'}[p]}</option>`).join('')}
+      </select>
+      ${UI.dashPeriod==='custom'?`
+        <input type="date" style="width:auto" value="${UI.dashFrom}" onchange="UI.dashFrom=this.value;RENDER.dashboard()">
+        <input type="date" style="width:auto" value="${UI.dashTo}" onchange="UI.dashTo=this.value;RENDER.dashboard()">
+      `:''}
+      ${currentUser().role==='Admin' ? `
+      <select style="width:auto" onchange="UI.dashUser=this.value;RENDER.dashboard()">
+        <option value="all">All Users</option>
+        ${DB.users.map(u=>`<option value="${u.id}" ${UI.dashUser===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}
+      </select>` : ''}
+    </div>
+  </div>
+  <div class="stat-grid">
+    ${cards.map(c=>`<div class="stat" style="--c:${c.c}" onclick="dashList('${c.k}','${c.lbl}')"><div class="ico">${c.ico}</div><div class="num">${c.num}</div><div class="lbl">${c.lbl}</div></div>`).join('')}
+  </div>
+  <div class="grid-2">
+    <div class="card"><div class="card-head"><h3>🔁 Today's Follow-ups & Overdue</h3><button class="btn sm ghost" onclick="dashList('followUps','Follow-up Leads')">View all</button></div>${miniList(followUps.slice(0,6),'followUpDate','No follow-ups pending 🎉')}</div>
+    <div class="card"><div class="card-head"><h3>📍 Visiting Today (${prettyDate(t)})</h3><button class="btn sm ghost" onclick="dashList('visitsToday','Visiting Today')">View all</button></div>${miniList(visitsToday.slice(0,6),'visitDate','No visits scheduled today')}</div>
+  </div>
+  <div class="card">
+    <div class="card-head"><h3>📋 Recent Leads (${leads.length} in selected period)</h3><button class="btn sm" onclick="go('leads')">Open Leads →</button></div>
+    <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Shop</th><th>City</th><th>Source</th><th>Tagging</th><th>Assigned</th><th>Follow Up</th><th>Visit</th></tr></thead>
+      <tbody>${leads.slice().sort((a,b)=>(b.entryDate||'').localeCompare(a.entryDate||'')).slice(0,8).map(l=>`
+        <tr onclick="editLead('${l.id}')" style="cursor:pointer">
+          <td><b>${esc(l.name||'—')}</b><br><span class="muted" style="font-size:11px">${esc(l.mobile||'')}</span></td>
+          <td>${esc(l.shopName||'—')}</td><td>${esc(l.city||'—')}</td><td>${esc(l.leadSource||'—')}</td>
+          <td><span class="tag ${esc(l.tagging||'default')}">${esc(l.tagging||'—')}</span></td>
+          <td>${esc(userName(l.assignedTo))}</td>
+          <td>${prettyDate(l.followUpDate)}</td><td>${prettyDate(l.visitDate)}</td>
+        </tr>`).join('') || `<tr><td colspan="8" class="empty">No leads in this period</td></tr>`}
+      </tbody></table></div>
+  </div>`;
+};
 
-/* PASTE ALL THE RENDER FUNCTIONS FROM PREVIOUS CODE HERE (Dashboard, Uploads, Reports, Leads, Products, Settings) */
-/* For saveLead, deleteLead, bulkDeleteLeads: use fetch API instead of Firebase */
+function miniList(list,dateKey,emptyMsg){
+  if(!list.length) return `<div class="empty">${emptyMsg}</div>`;
+  const t=today();
+  return list.map(l=>{
+    const overdue = l[dateKey] && l[dateKey]<t;
+    return `<div class="row-between" style="padding:9px 0;border-bottom:1px solid var(--border)">
+      <div style="min-width:0"><div style="font-weight:700;font-size:12.5px">${esc(l.name||'Unnamed')}</div><div class="muted" style="font-size:11px">${esc(l.shopName||'')} • ${esc(l.mobile||'')} • ${esc(l.city||'')}</div></div>
+      <div style="text-align:right;flex:0 0 auto"><div style="font-size:11px;font-weight:800;color:${overdue?'var(--danger)':'var(--accent)'}">${prettyDate(l[dateKey])}</div><button class="btn sm" style="margin-top:5px" onclick="editLead('${l.id}')">Open</button></div>
+    </div>`;
+  }).join('');
+}
+
+function dashList(key,title){
+  const list=DASH_LISTS[key]||[];
+  if(!list.length){ toast('No records in this list','info'); return; }
+  openModal(`
+    <div class="tbl-wrap" style="max-height:60vh"><table>
+      <thead><tr><th>Name</th><th>Mobile</th><th>Shop</th><th>City</th><th>Tagging</th><th>Assigned</th><th>Follow Up</th><th>Visit</th><th>Action</th></tr></thead>
+      <tbody>${list.map(l=>`<tr><td><b>${esc(l.name||'—')}</b></td><td>${esc(l.mobile||'—')}</td><td>${esc(l.shopName||'—')}</td><td>${esc(l.city||'—')}</td>
+        <td><span class="tag ${esc(l.tagging||'default')}">${esc(l.tagging||'—')}</span></td><td>${esc(userName(l.assignedTo))}</td><td>${prettyDate(l.followUpDate)}</td><td>${prettyDate(l.visitDate)}</td>
+        <td><button class="btn sm primary" onclick="closeModal();editLead('${l.id}')">Open</button></td></tr>`).join('')}</tbody>
+    </table></div>`,{title:title+' ('+list.length+')',wide:true});
+}
+
+function openNotifications(){
+  const t=today();
+  const items=DB.leads.filter(l=>!isClosed(l) && ((l.followUpDate && l.followUpDate<=t)||l.visitDate===t));
+  openModal(items.length?items.map(l=>`
+    <div class="row-between" style="padding:10px 0;border-bottom:1px solid var(--border)">
+      <div><b style="font-size:13px">${esc(l.name||'Unnamed')}</b><div class="muted" style="font-size:11.5px">
+        ${l.followUpDate && l.followUpDate<=t ? `⏰ Follow-up ${l.followUpDate===t?'today':'(overdue) '+prettyDate(l.followUpDate)}` : ''}
+        ${l.visitDate===t ? ' &nbsp;📍 Visit today' : ''}
+        &nbsp; • ${esc(userName(l.assignedTo))}
+      </div></div>
+      <button class="btn sm" onclick="closeModal();editLead('${l.id}')">Open</button>
+    </div>`).join(''):`<div class="empty">No pending notifications 🎉</div>`,{title:'🔔 Notifications'});
+}
+
+RENDER.uploads = function(){
+  if(!can('uploads')){ $('#page-uploads').innerHTML=`<div class="empty">Access denied. Contact Admin.</div>`; return; }
+  $('#page-uploads').innerHTML=`
+  <div class="page-head"><div><h1>Uploads</h1><p class="muted">Import leads from Excel / CSV or sync directly from Google Sheets</p></div></div>
+  <div class="grid-2">
+    <div class="card"><div class="card-head"><h3>📤 Upload Excel / CSV File</h3></div>
+      <div class="drop" id="drop"><div class="big">📁</div><div style="font-weight:800;font-size:14px">Click or drop your file here</div><div class="muted" style="font-size:12px;margin-top:6px">Supports .csv, .xlsx, .xls — first row must be column headers</div></div>
+      <input type="file" id="fileIn" accept=".csv,.xlsx,.xls" hidden>
+    </div>
+    <div class="card"><div class="card-head"><h3>🔗 Google Sheet Sync</h3></div>
+      <div style="display:flex;flex-direction:column;gap:11px">
+        <div><label class="fld">Google Sheet URL</label><input id="gsUrl" placeholder="https://docs.google.com/spreadsheets/d/XXXX/edit" value="${esc(DB.settings.sheetUrl||'')}"></div>
+        <div><label class="fld">Sheet / Tab Name (optional)</label><input id="gsName" placeholder="Sheet1" value="${esc(DB.settings.sheetName||'')}"></div>
+        <div class="row-between">
+          <div style="display:flex;align-items:center;gap:9px"><label class="switch"><input type="checkbox" id="gsAuto" ${DB.settings.autoSync?'checked':''}><span class="slider"></span></label><span style="font-size:12px;font-weight:600">Auto sync (every 60s)</span></div>
+          <button class="btn primary" onclick="fetchSheet()">Connect & Fetch</button>
+        </div>
+        <div class="muted" style="font-size:11.5px;line-height:1.65">ⓘ Share the sheet as <b>“Anyone with the link → Viewer”</b>.${DB.settings.lastSync?`<br>Last sync: <b>${esc(DB.settings.lastSync)}</b>`:''}</div>
+      </div>
+    </div>
+  </div>
+  <div id="mapArea" style="margin-top:16px"></div>`;
+  const drop=$('#drop'), fileIn=$('#fileIn');
+  drop.onclick=()=>fileIn.click();
+  drop.ondragover=e=>{e.preventDefault();drop.style.borderColor='var(--primary)';};
+  drop.ondragleave=()=>{drop.style.borderColor='var(--border)';};
+  drop.ondrop=e=>{e.preventDefault();drop.style.borderColor='var(--border)';if(e.dataTransfer.files[0])handleFile(e.dataTransfer.files[0]);};
+  fileIn.onchange=e=>{ if(e.target.files[0]) handleFile(e.target.files[0]); };
+  $('#gsAuto').onchange=function(){
+    DB.settings.autoSync=this.checked; saveLocal();
+    if(this.checked){ startAutoSync(); toast('Auto sync enabled','ok'); } else { stopAutoSync(); toast('Auto sync disabled','info'); }
+  };
+  if(UI.upload) renderMapping();
+};
+
+function parseSheetData(text,isBinary,fileName){
+  let aoa=[];
+  if(window.XLSX){
+    const wb = isBinary ? XLSX.read(new Uint8Array(text),{type:'array'}) : XLSX.read(text,{type:'string'});
+    const ws=wb.Sheets[wb.SheetNames[0]];
+    aoa=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+  } else {
+    aoa=text.split(/\r?\n/).filter(Boolean).map(line=>{
+      const out=[];let cur='',q=false;
+      for(let i=0;i<line.length;i++){ const c=line[i]; if(c==='"'){ if(q&&line[i+1]==='"'){cur+='"';i++;} else q=!q; } else if(c===','&&!q){ out.push(cur); cur=''; } else cur+=c; }
+      out.push(cur); return out;
+    });
+  }
+  aoa=aoa.filter(r=>r.some(c=>String(c).trim()!==''));
+  if(aoa.length<2) throw new Error('File has no data rows');
+  return {headers:aoa[0].map((h,i)=>String(h).trim()||('Column '+(i+1))),rows:aoa.slice(1),fileName:fileName||'Imported file'};
+}
+
+function handleFile(file){
+  const reader=new FileReader(); const isCsv=/\.csv$/i.test(file.name);
+  reader.onload=e=>{
+    try{
+      const parsed=parseSheetData(e.target.result,!isCsv,file.name);
+      UI.upload=parsed; UI.upload.map=autoMap(parsed.headers); UI.upload.source='file';
+      renderMapping(); toast('File parsed: '+parsed.rows.length+' rows','ok');
+    }catch(err){ toast('Parse error: '+err.message,'err'); }
+  };
+  if(isCsv) reader.readAsText(file); else reader.readAsArrayBuffer(file);
+}
+
+function autoMap(headers){
+  const map={};
+  BASE_FIELDS.forEach(f=>{
+    const norm=s=>String(s).toLowerCase().replace(/[^a-z0-9]/g,'');
+    const target=norm(f.label);
+    const hit=headers.find(h=>{ const n=norm(h); return n===target || n.includes(target) || (target.includes(n) && n.length>3); });
+    map[f.key]=hit||'';
+  });
+  return map;
+}
+
+function renderMapping(){
+  const u=UI.upload;
+  if(!u){ const a=$('#mapArea'); if(a) a.innerHTML=''; return; }
+  $('#mapArea').innerHTML=`
+  <div class="card">
+    <div class="card-head"><h3>🗂️ Column Mapping — ${esc(u.fileName)} <span class="muted" style="font-weight:500">(${u.rows.length} rows)</span></h3>
+      <div style="display:flex;gap:8px"><button class="btn sm" onclick="UI.upload=null;document.getElementById('mapArea').innerHTML=''">Cancel</button><button class="btn primary" onclick="importMapped()">⬆ Import & Merge ${u.rows.length} Rows</button></div>
+    </div>
+    <div class="grid-3" style="margin-bottom:16px">${BASE_FIELDS.map(f=>`<div><label class="fld">${f.label}${['name','mobile'].includes(f.key)?' *':''}</label><select onchange="UI.upload.map['${f.key}']=this.value"><option value="">— Skip —</option>${u.headers.map(h=>`<option value="${esc(h)}" ${u.map[f.key]===h?'selected':''}>${esc(h)}</option>`).join('')}</select></div>`).join('')}</div>
+    <div class="card-head"><h3>👁️ Preview (first 5 rows)</h3></div>
+    <div class="tbl-wrap" style="max-height:280px"><table><thead><tr>${u.headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${u.rows.slice(0,5).map(r=>`<tr>${u.headers.map((_,i)=>`<td>${esc(r[i]??'')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+  </div>`;
+}
+
+function rowToLead(row,u){
+  const get=k=>{ const col=u.map[k]; if(!col) return ''; const idx=u.headers.indexOf(col); return idx>=0 ? String(row[idx]??'').trim() : ''; };
+  const toDate=v=>{
+    if(!v) return '';
+    if(/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0,10);
+    const m=v.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+    if(m){ let y=m[3]; if(y.length===2) y='20'+y; return `${y}-${pad(m[2])}-${pad(m[1])}`; }
+    const d=new Date(v); return isNaN(d)?'':fmtDate(d);
+  };
+  return {
+    id:uid('ld'), leadSource:get('leadSource'), entryDate:toDate(get('entryDate'))||today(), mobile:get('mobile').replace(/\D/g,'').slice(-10),
+    name:get('name'), city:get('city'), state:get('state'), shopName:get('shopName'), orderAmount:Number(String(get('orderAmount')).replace(/[^\d.]/g,''))||0,
+    orderQty:Number(String(get('orderQty')).replace(/[^\d.]/g,''))||0, tagging:get('tagging')||'Hot', followUpDate:toDate(get('followUpDate')),
+    visitDate:toDate(get('visitDate')), remarks:get('remarks'), assignedTo:get('assignedTo')||DB.settings.currentUserId, createdAt:Date.now()
+  };
+}
+
+async function importMapped(silent){
+  const u=UI.upload; if(!u) return;
+  if(!u.map.name && !u.map.mobile){ toast('Map at least Name or Mobile column','err'); return; }
+  
+  const btn = document.querySelector('#mapArea .btn.primary');
+  if(btn){ btn.disabled = true; btn.textContent = "Importing..."; }
+
+  let added=0, skipped=0;
+  let newLeads = [];
+  u.rows.forEach(r=>{
+    const lead=rowToLead(r,u);
+    if(!lead.name && !lead.mobile){ skipped++; return; }
+    // Duplicate check
+    if(lead.mobile && DB.leads.some(x=>x.mobile===lead.mobile)){ skipped++; return; }
+    DB.leads.push(lead); 
+    newLeads.push(lead); 
+    added++;
+  });
+  
+  if(newLeads.length > 0) {
+    // Send each lead to cloudflare
+    for(const l of newLeads){
+      await fetch(`${API_URL}/api/leads`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(l)
+      });
+    }
+  }
+  updateTopbar();
+  
+  if(!silent){ toast(`Imported & Merged ${added} leads (${skipped} skipped)`,'ok'); }
+  UI.upload=null; const area=$('#mapArea'); if(area) area.innerHTML='';
+  if(UI.page==='uploads') RENDER.uploads(); else if(UI.page==='leads') RENDER.leads();
+}
+
+let autoSyncTimer=null;
+function extractSheetInfo(url){
+  const match = url.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (!match) return null;
+  const sheetId = match[1];
+  let gid = null;
+  const gidMatch = url.match(/[#&?]gid=([0-9]+)/);
+  if (gidMatch) gid = gidMatch[1];
+  return { sheetId, gid };
+}
+
+async function fetchSheet(silent=false){
+  const urlInput = ($('#gsUrl')||{}).value || DB.settings.sheetUrl;
+  const nameInput = ($('#gsName')||{}).value || DB.settings.sheetName;
+  if(!urlInput){ toast('Please paste a Google Sheet URL','err'); return; }
+  const info = extractSheetInfo(urlInput);
+  if(!info){ toast('Invalid Google Sheet URL format','err'); return; }
+  DB.settings.sheetUrl = urlInput; DB.settings.sheetName = nameInput || ''; saveLocal();
+  let csvUrl = `https://docs.google.com/spreadsheets/d/${info.sheetId}/export?format=csv`;
+  if (info.gid) csvUrl += `&gid=${info.gid}`;
+  else if (nameInput) csvUrl += `&sheet=${encodeURIComponent(nameInput)}`;
+  const proxies = [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(csvUrl)}`,
+    `https://corsproxy.io/?${encodeURIComponent(csvUrl)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(csvUrl)}`
+  ];
+  try{
+    if(!silent) toast('Fetching sheet data...','info');
+    let text = null;
+    for (let proxy of proxies) {
+      try {
+        const res = await fetch(proxy, { cache: 'no-store' });
+        if (res.ok) {
+          const tempText = await res.text();
+          if (!tempText.trim().startsWith('<')) { text = tempText; break; }
+        }
+      } catch(e) { console.warn('Proxy failed, trying next...', e); }
+    }
+    if (!text) throw new Error('Could not reach Google Sheets. Ensure sharing is set to "Anyone with the link → Viewer".');
+    const parsed = parseSheetData(text, false, 'Google Sheet');
+    UI.upload = parsed; UI.upload.map = autoMap(parsed.headers); UI.upload.source = 'sheet';
+    renderMapping(); DB.settings.lastSync = new Date().toLocaleString(); saveLocal();
+    toast('Sheet connected — '+parsed.rows.length+' rows loaded','ok');
+    if(silent) importMapped(true);
+  } catch(err){ toast('Sheet fetch error: ' + err.message, 'err'); console.error(err); }
+}
+function startAutoSync(){ stopAutoSync(); autoSyncTimer=setInterval(()=>fetchSheet(true),60000); }
+function stopAutoSync(){ if(autoSyncTimer){ clearInterval(autoSyncTimer); autoSyncTimer=null; } }
+
+RENDER.reports = function(){
+  if(!can('reports')){ $('#page-reports').innerHTML=`<div class="empty">Access denied</div>`; return; }
+  const {from,to}=periodRange(UI.reportPeriod,UI.reportFrom,UI.reportTo);
+  let leads=filterLeads({from,to,user:UI.reportUser});
+  if(UI.reportTag!=='all') leads=leads.filter(l=>l.tagging===UI.reportTag);
+  const groupCount=(arr,fn)=>{ const m={}; arr.forEach(x=>{ const k=fn(x)||'—'; m[k]=(m[k]||0)+1; }); return Object.entries(m).sort((a,b)=>b[1]-a[1]); };
+  const sourceData = groupCount(leads,l=>l.leadSource);
+  const tagData    = groupCount(leads,l=>l.tagging);
+  const stateData  = groupCount(leads,l=>l.state);
+  const userData   = groupCount(leads,l=>userName(l.assignedTo));
+  const orderLeads = leads.filter(l=>Number(l.orderAmount)>0);
+  const orderTotal = orderLeads.reduce((s,l)=>s+Number(l.orderAmount||0),0);
+  const qtyTotal   = leads.reduce((s,l)=>s+Number(l.orderQty||0),0);
+  const maxOf = d => Math.max(1,...d.map(x=>x[1]));
+  const bars = (data,total) => data.length ? data.map(([k,v])=>`<div class="bar-row"><div class="name" title="${esc(k)}">${esc(k)}</div><div class="bar-track"><div class="bar-fill" style="width:${(v/maxOf(data)*100).toFixed(1)}%"></div></div><div class="val">${v} <span class="muted" style="font-weight:500">(${total?Math.round(v/total*100):0}%)</span></div></div>`).join('') : `<div class="empty">No data</div>`;
+  $('#page-reports').innerHTML=`
+  <div class="page-head">
+    <div><h1>Reports</h1><p class="muted">Analytics across lead sources, users, orders, states and tagging</p></div>
+    <div class="filters">
+      <select style="width:auto" onchange="UI.reportPeriod=this.value;RENDER.reports()">
+        ${['yesterday','weekly','monthly','custom','all'].map(p=>`<option value="${p}" ${UI.reportPeriod===p?'selected':''}>${{yesterday:'Yesterday',weekly:'Weekly',monthly:'Monthly',custom:'Custom',all:'All Time'}[p]}</option>`).join('')}
+      </select>
+      ${UI.reportPeriod==='custom'?`<input type="date" style="width:auto" value="${UI.reportFrom}" onchange="UI.reportFrom=this.value;RENDER.reports()"><input type="date" style="width:auto" value="${UI.reportTo}" onchange="UI.reportTo=this.value;RENDER.reports()">`:''}
+      ${currentUser().role==='Admin' ? `
+      <select style="width:auto" onchange="UI.reportUser=this.value;RENDER.reports()">
+        <option value="all">All Users</option>
+        ${DB.users.map(u=>`<option value="${u.id}" ${UI.reportUser===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}
+      </select>` : ''}
+      <select style="width:auto" onchange="UI.reportTag=this.value;RENDER.reports()"><option value="all">All Tagging</option>${DB.tags.map(t=>`<option value="${esc(t)}" ${UI.reportTag===t?'selected':''}>${esc(t)}</option>`).join('')}</select>
+      <button class="btn primary" onclick="downloadReport()">⬇ Download CSV</button>
+    </div>
+  </div>
+  <div class="stat-grid" style="margin-bottom:16px">
+    <div class="stat" style="--c:var(--primary)"><div class="ico">👥</div><div class="num">${leads.length}</div><div class="lbl">Total Leads</div></div>
+    <div class="stat" style="--c:var(--ok)"><div class="ico">🧾</div><div class="num">${orderLeads.length}</div><div class="lbl">Order Count</div></div>
+    <div class="stat" style="--c:var(--accent)"><div class="ico">💰</div><div class="num" style="font-size:22px">${money(orderTotal)}</div><div class="lbl">Total Order Amount</div></div>
+    <div class="stat" style="--c:var(--purple)"><div class="ico">📦</div><div class="num">${qtyTotal}</div><div class="lbl">Total Quantity</div></div>
+  </div>
+  <div class="grid-2">
+    <div class="card"><div class="card-head"><h3>📊 Lead Source Count</h3></div>${bars(sourceData,leads.length)}</div>
+    <div class="card"><div class="card-head"><h3>🏷️ Tagging Count</h3></div>${bars(tagData,leads.length)}</div>
+    <div class="card"><div class="card-head"><h3>📞 User Call / Lead Count</h3></div>${bars(userData,leads.length)}</div>
+    <div class="card"><div class="card-head"><h3>🗺️ State Wise Count</h3></div>${bars(stateData,leads.length)}</div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <div class="card-head"><h3>💵 Order Amount Details</h3><b style="color:var(--ok)">${money(orderTotal)}</b></div>
+    <div class="tbl-wrap" style="max-height:320px">
+      <table><thead><tr><th>Name</th><th>Shop</th><th>State</th><th>User</th><th>Order Qty</th><th>Order Amount</th><th>Tagging</th></tr></thead>
+      <tbody>${orderLeads.length?orderLeads.map(l=>`<tr><td><b>${esc(l.name||'—')}</b></td><td>${esc(l.shopName||'—')}</td><td>${esc(l.state||'—')}</td><td>${esc(userName(l.assignedTo))}</td><td>${l.orderQty||0}</td><td style="color:var(--ok);font-weight:800">${money(l.orderAmount)}</td><td><span class="tag ${esc(l.tagging||'default')}">${esc(l.tagging||'—')}</span></td></tr>`).join(''):`<tr><td colspan="7" class="empty">No orders in this period</td></tr>`}</tbody></table>
+    </div>
+  </div>`;
+};
+
+function downloadCSV(filename,rows){
+  const csv=rows.map(r=>r.map(c=>{ const s=String(c??''); return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s; }).join(',')).join('\n');
+  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+}
+
+function downloadReport(){
+  const {from,to}=periodRange(UI.reportPeriod,UI.reportFrom,UI.reportTo);
+  let leads=filterLeads({from,to,user:UI.reportUser});
+  if(UI.reportTag!=='all') leads=leads.filter(l=>l.tagging===UI.reportTag);
+  const cols=DB.columns.filter(c=>c.visible);
+  const head=['#',...cols.map(c=>c.label),'Assigned To'];
+  const rows=leads.map((l,i)=>[i+1,...cols.map(c=>l[c.key]??''),userName(l.assignedTo)]);
+  const meta=[['TyroCRM — Leads Report'],['Generated On', new Date().toLocaleString()],['Period', UI.reportPeriod],['From', from],['To', to],['Tagging Filter', UI.reportTag],['User Filter', UI.reportUser==='all'?'All Users':userName(UI.reportUser)],['Total Records', leads.length],[]];
+  downloadCSV(`TyroCRM_Report_${from}_to_${to}.csv`, [...meta,...[head],...rows]);
+  toast('Report downloaded as CSV','ok');
+}
+
+RENDER.leads = function(){
+  if(!can('leads')){ $('#page-leads').innerHTML=`<div class="empty">Access denied</div>`; return; }
+  const cols=DB.columns.filter(c=>c.visible);
+  let leads=filterLeads({from:'0000-01-01', to:'9999-12-31'});
+  
+  const q=UI.leadSearch.toLowerCase().trim();
+  if(q) leads=leads.filter(l=>['name','mobile','shopName','city','state','leadSource','remarks'].some(k=>String(l[k]||'').toLowerCase().includes(q)));
+  if(UI.leadTag!=='all') leads=leads.filter(l=>l.tagging===UI.leadTag);
+  if(UI.leadUser && UI.leadUser!=='all') leads=leads.filter(l=>l.assignedTo===UI.leadUser);
+  
+  leads.sort((a,b)=>(b.entryDate||'').localeCompare(a.entryDate||''));
+
+  const cell=(l,c)=>{
+    const v=l[c.key];
+    if(c.key==='tagging') return `<span class="tag ${esc(v||'default')}">${esc(v||'—')}</span>`;
+    if(c.key==='orderAmount') return v?`<b style="color:var(--ok)">${money(v)}</b>`:'—';
+    if(c.key==='followUpDate'||c.key==='visitDate'||c.key==='entryDate') return prettyDate(v);
+    if(c.key==='mobile') return v?`<a href="tel:${esc(v)}" style="color:var(--accent);text-decoration:none">${esc(v)}</a>`:'—';
+    if(c.key==='remarks') return `<span title="${esc(v||'')}">${esc(String(v||'—').slice(0,34))}${String(v||'').length>34?'…':''}</span>`;
+    return esc(v??'—') || '—';
+  };
+
+  const allChecked = leads.length > 0 && leads.every(l => UI.selectedLeads.has(l.id));
+
+  $('#page-leads').innerHTML=`
+  <div class="page-head">
+    <div><h1>Leads</h1><p class="muted">${leads.length} leads — All users can view all data</p></div>
+    <div class="filters">
+      <input style="width:210px" placeholder="🔍 Search name, mobile, shop…" value="${esc(UI.leadSearch)}" oninput="UI.leadSearch=this.value;clearTimeout(window.__s);window.__s=setTimeout(()=>RENDER.leads(),260)">
+      <select style="width:auto" onchange="UI.leadTag=this.value;RENDER.leads()"><option value="all">All Tagging</option>${DB.tags.map(t=>`<option value="${esc(t)}" ${UI.leadTag===t?'selected':''}>${esc(t)}</option>`).join('')}</select>
+      <select style="width:auto" onchange="UI.leadUser=this.value;RENDER.leads()"><option value="all">All Users</option>${DB.users.map(u=>`<option value="${u.id}" ${UI.leadUser===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}</select>
+      <button class="btn" onclick="openColumnSettings()">⚙️ Columns</button>
+      <button class="btn primary" onclick="editLead()">＋ Add Lead</button>
+      <button class="btn" onclick="exportLeads()">⬇ Export</button>
+      ${UI.selectedLeads.size > 0 ? `<button class="btn danger" onclick="bulkDeleteLeads()">🗑 Delete Selected (${UI.selectedLeads.size})</button>` : ''}
+    </div>
+  </div>
+  <div class="card">
+    <div class="tbl-wrap" style="max-height:calc(100vh - 250px)">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:40px"><input type="checkbox" onchange="toggleSelectAllLeads(this.checked)" ${allChecked?'checked':''} style="width:auto;cursor:pointer"></th>
+            ${cols.map(c=>`<th>${esc(c.label)}</th>`).join('')}
+            <th>Assigned</th>
+            <th style="text-align:right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${leads.length?leads.map(l=>`<tr>
+            <td><input type="checkbox" value="${l.id}" ${UI.selectedLeads.has(l.id)?'checked':''} onchange="toggleSelectLead('${l.id}', this.checked)" style="width:auto;cursor:pointer"></td>
+            ${cols.map(c=>`<td>${cell(l,c)}</td>`).join('')}
+            <td>${esc(userName(l.assignedTo))}</td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="btn sm" title="Edit" onclick="editLead('${l.id}')">✏️</button>
+              <button class="btn sm" title="Send Message" onclick="sendMessage('${l.id}')">💬</button>
+              <button class="btn sm danger" title="Delete" onclick="deleteLead('${l.id}')">🗑</button>
+            </td>
+          </tr>`).join(''):`<tr><td colspan="${cols.length+3}" class="empty">No leads found</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+};
+
+function toggleSelectLead(id, checked) {
+  if (checked) UI.selectedLeads.add(id);
+  else UI.selectedLeads.delete(id);
+  RENDER.leads();
+}
+
+function toggleSelectAllLeads(checked) {
+  const cols = DB.columns.filter(c=>c.visible);
+  let leads = filterLeads({from:'0000-01-01', to:'9999-12-31'});
+  const q = UI.leadSearch.toLowerCase().trim();
+  if(q) leads=leads.filter(l=>['name','mobile','shopName','city','state','leadSource','remarks'].some(k=>String(l[k]||'').toLowerCase().includes(q)));
+  if(UI.leadTag!=='all') leads=leads.filter(l=>l.tagging===UI.leadTag);
+  if(UI.leadUser && UI.leadUser!=='all') leads=leads.filter(l=>l.assignedTo===UI.leadUser);
+
+  if (checked) leads.forEach(l => UI.selectedLeads.add(l.id));
+  else leads.forEach(l => UI.selectedLeads.delete(l.id));
+  RENDER.leads();
+}
+
+async function bulkDeleteLeads() {
+  const count = UI.selectedLeads.size;
+  if (count === 0) return;
+  if (!confirm(`Are you sure you want to permanently delete ${count} selected lead(s)?`)) return;
+  
+  for(const id of UI.selectedLeads){
+    await fetch(`${API_URL}/api/leads/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id })
+    });
+  }
+  
+  DB.leads = DB.leads.filter(l => !UI.selectedLeads.has(l.id));
+  UI.selectedLeads.clear();
+  
+  updateTopbar();
+  RENDER.leads();
+  toast(`${count} leads deleted successfully`, 'ok');
+}
+
+function openColumnSettings(){
+  openModal(`
+    <div class="muted" style="font-size:12px;margin-bottom:14px;line-height:1.6">Check the columns you want visible in the Leads table. Reorder with ↑↓. Click <b>Apply &amp; Save</b> to persist.</div>
+    <div id="colSettingList"></div>
+    <div class="hr"></div>
+    <div class="row-between">
+      <div style="display:flex;gap:8px"><button class="btn sm" onclick="selectAllColumns(true)">Select All</button><button class="btn sm" onclick="selectAllColumns(false)">Clear All</button><button class="btn sm" onclick="resetColumns()">Reset to Default</button></div>
+      <div style="display:flex;gap:8px"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="applyColumnSettings()">💾 Apply &amp; Save</button></div>
+    </div>`,{title:'⚙️ Customize Lead Columns', wide:true});
+  renderColumnSettingList();
+}
+
+function renderColumnSettingList(){
+  const box = $('#colSettingList'); if(!box) return;
+  box.innerHTML = DB.columns.map((c,i)=>`<div class="row-between" style="padding:9px 0;border-bottom:1px solid var(--border)">
+    <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;font-weight:600;flex:1">
+      <input type="checkbox" data-col="${i}" ${c.visible?'checked':''} style="width:auto;margin:0">
+      ${esc(c.label)} ${BASE_FIELDS.some(b=>b.key===c.key) ? '' : '<span class="tag default" style="font-size:9px">CUSTOM</span>'}
+    </label>
+    <div style="display:flex;gap:5px"><button class="btn sm" onclick="colMove(${i},-1)" ${i===0?'disabled':''}>↑</button><button class="btn sm" onclick="colMove(${i},1)" ${i===DB.columns.length-1?'disabled':''}>↓</button></div>
+  </div>`).join('');
+}
+function colMove(i,dir){ const j=i+dir; if(j<0||j>=DB.columns.length) return; [DB.columns[i],DB.columns[j]]=[DB.columns[j],DB.columns[i]]; renderColumnSettingList(); }
+function selectAllColumns(val){ DB.columns.forEach(c=>c.visible=val); renderColumnSettingList(); }
+function resetColumns(){ DB.columns = JSON.parse(JSON.stringify(DEFAULT_COLUMNS)).map(c=>({...c,visible:true})); renderColumnSettingList(); toast('Columns reset to default','info'); }
+function applyColumnSettings(){
+  $$('#colSettingList input[type="checkbox"]').forEach(cb=>{ const i=Number(cb.dataset.col); if(!isNaN(i) && DB.columns[i]) DB.columns[i].visible = cb.checked; });
+  if(!DB.columns.some(c=>c.visible)){ toast('At least one column must be visible','err'); return; }
+  saveLocal(); closeModal(); RENDER.leads(); toast('Column preferences saved ✔','ok');
+}
+
+function exportLeads(){
+  const cols=DB.columns.filter(c=>c.visible);
+  const head=[...cols.map(c=>c.label),'Assigned To'];
+  const leads=filterLeads({from:'0000-01-01', to:'9999-12-31'});
+  const rows=leads.map(l=>[...cols.map(c=>l[c.key]??''),userName(l.assignedTo)]);
+  downloadCSV('TyroCRM_Leads_'+today()+'.csv',[head,...rows]);
+  toast('Leads exported','ok');
+}
+
+function editLead(id){
+  const l = id ? DB.leads.find(x=>x.id===id) : null;
+  const d = l || {id:null, leadSource:'', entryDate:today(), mobile:'', name:'', city:'', state:'', shopName:'', orderAmount:'', orderQty:'', tagging:DB.tags[0]||'Hot', followUpDate:'', visitDate:'', remarks:'', assignedTo:DB.settings.currentUserId};
+  const fieldHtml = DB.columns.map(c=>{
+    const isTextarea=c.key==='remarks'||c.type==='textarea'; const type=c.type==='date'?'date':(c.type==='number'?'number':'text'); const val=esc(d[c.key]??'');
+    let input;
+    if(c.key==='tagging') input=`<select name="${c.key}">${DB.tags.map(t=>`<option value="${esc(t)}" ${d.tagging===t?'selected':''}>${esc(t)}</option>`).join('')}</select>`;
+    else if(isTextarea) input=`<textarea name="${c.key}" placeholder="Enter ${esc(c.label)}">${val}</textarea>`;
+    else input=`<input type="${type}" name="${c.key}" value="${val}" placeholder="Enter ${esc(c.label)}">`;
+    const full = isTextarea || c.key==='remarks' ? ' full' : '';
+    return `<div class="${full.trim()}"><label class="fld">${esc(c.label)}</label>${input}</div>`;
+  }).join('');
+  openModal(`
+    <div class="form-grid">${fieldHtml}<div><label class="fld">Assigned To</label>
+      ${currentUser().role === 'Admin' ? 
+        `<select name="assignedTo">${DB.users.map(u=>`<option value="${u.id}" ${d.assignedTo===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}</select>` : 
+        `<select name="assignedTo">${DB.users.map(u=>`<option value="${u.id}" ${d.assignedTo===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}</select>`
+      }
+    </div></div>
+    <div class="hr"></div>
+    <div class="row-between"><div class="muted" style="font-size:11.5px">${l?'Created: '+new Date(l.createdAt||Date.now()).toLocaleString():'New lead will be added to your pipeline'}</div>
+    <div style="display:flex;gap:8px"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveLead('${id||''}')">💾 Save Lead</button></div></div>
+  `,{title: l?'✏️ Edit Lead':'＋ Add New Lead', wide:true});
+}
+
+async function saveLead(id){
+  const form=$('.modal-body'); const data={};
+  $$('input,select,textarea',form).forEach(el=>{ if(el.name && !el.disabled) data[el.name]=el.value; });
+  if(!data.assignedTo) data.assignedTo = DB.settings.currentUserId;
+  data.orderAmount=Number(data.orderAmount)||0; data.orderQty=Number(data.orderQty)||0;
+  if(!data.name && !data.mobile){ toast('Name or Mobile is required','err'); return; }
+  if(!data.entryDate) data.entryDate=today();
+  
+  if(id){ 
+    const idx=DB.leads.findIndex(x=>x.id===id); 
+    if(idx>-1) DB.leads[idx]=Object.assign(DB.leads[idx],data); 
+    
+    await fetch(`${API_URL}/api/leads/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...data, id })
+    });
+    toast('Lead updated successfully','ok'); 
+  }
+  else { 
+    const newLead = Object.assign({id:uid('ld'),createdAt:Date.now()},data);
+    DB.leads.push(newLead); 
+    
+    await fetch(`${API_URL}/api/leads`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newLead)
+    });
+    toast('Lead added successfully','ok'); 
+  }
+  closeModal(); refresh();
+}
+
+async function deleteLead(id){
+  const l=DB.leads.find(x=>x.id===id); if(!l) return;
+  if(!confirm(`Delete lead "${l.name||l.mobile}"? This cannot be undone.`)) return;
+  DB.leads=DB.leads.filter(x=>x.id!==id);
+  UI.selectedLeads.delete(id);
+  
+  await fetch(`${API_URL}/api/leads/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id })
+  });
+  
+  updateTopbar(); RENDER[UI.page]&&RENDER[UI.page](); toast('Lead deleted','ok');
+}
+
+function sendMessage(leadId){
+  const lead=DB.leads.find(l=>l.id===leadId); if(!lead) return;
+  if(!DB.products.length){ toast('Add products first in the Products module','err'); return; }
+  UI.msg={leadId, selected:new Set(), target:'whatsapp', phone:lead.mobile||''}; renderMsgModal();
+}
+
+function renderMsgModal(){
+  const {leadId,selected}=UI.msg; const lead=DB.leads.find(l=>l.id===leadId);
+  openModal(`
+    <div class="row-between" style="margin-bottom:14px"><div><b style="font-size:13.5px">${esc(lead.name||'Lead')}</b><div class="muted" style="font-size:11.5px">${esc(lead.shopName||'')} • ${esc(lead.mobile||'')}</div></div><div class="muted" style="font-size:11.5px">${selected.size} selected</div></div>
+    <div class="prod-grid">${DB.products.map(p=>`<div class="prod-pick ${selected.has(p.id)?'sel':''}" onclick="toggleProduct('${p.id}')"><div class="chk">${selected.has(p.id)?'✓':''}</div><img src="${p.image}" alt="${esc(p.name)}"><div class="pi"><div class="pn">${esc(p.name)}</div><div class="pp">${esc(p.priceRange)}</div></div></div>`).join('')}</div>
+    <div class="hr"></div>
+    <div class="form-grid"><div><label class="fld">Send Via</label><select id="msgTarget" onchange="UI.msg.target=this.value"><option value="whatsapp">WhatsApp</option><option value="telegram">Telegram</option></select></div><div><label class="fld">Mobile / Chat Number</label><input id="msgPhone" value="${esc(UI.msg.phone)}" placeholder="919876543210"></div></div>
+    <div class="hr"></div>
+    <div class="row-between"><div class="muted" style="font-size:11px;max-width:420px;line-height:1.6">A PDF quotation with product images &amp; prices will be downloaded, then the chat window will open with the message pre-filled — just attach the downloaded PDF and hit send.</div><button class="btn primary" onclick="doSend()">📤 Generate PDF & Send</button></div>
+  `,{title:'💬 Send Product Catalogue', wide:true});
+}
+
+function toggleProduct(pid){ const s=UI.msg.selected; s.has(pid)?s.delete(pid):s.add(pid); renderMsgModal(); }
+
+function toPNG(src){
+  return new Promise(res=>{
+    const img=new Image(); img.crossOrigin='anonymous';
+    img.onload=()=>{ try{ const scale=Math.min(1,900/Math.max(img.width,img.height)); const c=document.createElement('canvas'); c.width=Math.max(1,Math.round(img.width*scale)); c.height=Math.max(1,Math.round(img.height*scale)); const ctx=c.getContext('2d'); ctx.fillStyle='#fff'; ctx.fillRect(0,0,c.width,c.height); ctx.drawImage(img,0,0,c.width,c.height); res({data:c.toDataURL('image/png'),w:c.width,h:c.height}); }catch(e){ res(null); } };
+    img.onerror=()=>res(null); img.src=src;
+  });
+}
+
+async function doSend(){
+  const {leadId,selected}=UI.msg; const lead=DB.leads.find(l=>l.id===leadId);
+  const prods=DB.products.filter(p=>selected.has(p.id)); if(!prods.length){ toast('Select at least one product','err'); return; }
+  const phone=($('#msgPhone').value||'').replace(/\D/g,''); UI.msg.phone=$('#msgPhone').value; const target=$('#msgTarget').value;
+  toast('Generating PDF…','info');
+  try{
+    const {jsPDF}=window.jspdf; const doc=new jsPDF({unit:'mm',format:'a4'}); const W=210;
+    doc.setFillColor(99,102,241); doc.rect(0,0,W,30,'F'); doc.setTextColor(255,255,255); doc.setFontSize(19); doc.setFont(undefined,'bold'); doc.text('Product Quotation',14,14); doc.setFontSize(9.5); doc.setFont(undefined,'normal'); doc.text('TyroCRM • '+new Date().toLocaleString(),14,22);
+    doc.setTextColor(30,35,55); doc.setFontSize(11); doc.setFont(undefined,'bold'); doc.text('To: '+(lead.name||'Customer'),14,42); doc.setFont(undefined,'normal'); doc.setFontSize(9.5); doc.setTextColor(80,90,110); doc.text((lead.shopName||'')+'  |  '+(lead.mobile||''),14,48); doc.text((lead.city||'')+(lead.state?', '+lead.state:''),14,54);
+    let y=66;
+    for(const p of prods){
+      if(y>225){ doc.addPage(); y=20; }
+      const img=await toPNG(p.image); if(img) doc.addImage(img.data,'PNG',14,y,44,33);
+      doc.setTextColor(25,30,50); doc.setFontSize(12); doc.setFont(undefined,'bold'); doc.text(doc.splitTextToSize(p.name,W-70),60,y+8); doc.setFont(undefined,'normal'); doc.setFontSize(10); doc.setTextColor(99,102,241); doc.text('Price: '+p.priceRange,60,y+16); doc.setTextColor(90,95,115); doc.setFontSize(9); doc.text(doc.splitTextToSize(p.details||'',W-78),60,y+23); doc.setDrawColor(225,230,240); doc.line(14,y+37,W-14,y+37); y+=45;
+    }
+    doc.setFontSize(8.5); doc.setTextColor(140,145,165); doc.text('This is a computer-generated quotation. Prices subject to stock availability.',14,285);
+    const fname='Quotation_'+String(lead.name||'Lead').replace(/\s+/g,'_')+'.pdf'; doc.save(fname);
+    const names=prods.map(p=>`• ${p.name} — ${p.priceRange}`).join('\n'); const text=`Hello ${lead.name||''},\n\nPlease find our quotation attached.\n\n${names}\n\nRegards,\nTyroCRM Sales Team`;
+    if(target==='whatsapp'){ if(!phone){ toast('PDF downloaded. Add a mobile number to open WhatsApp.','info'); closeModal(); return; } const p = phone.length===10 ? '91'+phone : phone; window.open(`https://wa.me/${p}?text=${encodeURIComponent(text)}`,'_blank'); }
+    else { window.open(`https://t.me/share/url?url=${encodeURIComponent('https://tyrocrm.app')}&text=${encodeURIComponent(text)}`,'_blank'); }
+    toast('PDF generated & chat opened ✔','ok'); closeModal();
+  }catch(err){ console.error(err); toast('PDF error: '+err.message,'err'); }
+}
+
+RENDER.products = function(){
+  if(!can('products')){ $('#page-products').innerHTML=`<div class="empty">Access denied</div>`; return; }
+  $('#page-products').innerHTML=`
+  <div class="page-head"><div><h1>Products</h1><p class="muted">Tyre catalogue — images, price range & details used in quotations</p></div><button class="btn primary" onclick="productModal()">＋ Add Product</button></div>
+  <div class="grid-3" style="margin-bottom:22px">${DB.products.length?DB.products.map(p=>`<div class="card" style="padding:0;overflow:hidden"><img src="${p.image}" style="width:100%;height:150px;object-fit:cover;display:block"><div style="padding:13px"><div style="font-weight:800;font-size:13px;margin-bottom:4px">${esc(p.name)}</div><div style="color:var(--accent);font-weight:800;font-size:12.5px;margin-bottom:6px">${esc(p.priceRange)}</div><div class="muted" style="font-size:11.5px;line-height:1.55;min-height:38px">${esc(p.details||'')}</div><div class="row-between" style="margin-top:11px"><button class="btn sm" onclick="productModal('${p.id}')">✏️ Edit</button><button class="btn sm danger" onclick="deleteProduct('${p.id}')">🗑 Delete</button></div></div></div>`).join(''):`<div class="card empty" style="grid-column:1/-1">No products yet. Click “Add Product”.</div>`}</div>
+  <div class="card"><div class="card-head"><h3>👔 Staff Directory</h3><button class="btn sm" onclick="staffModal()">＋ Add Staff</button></div>
+    <div class="grid-3">${DB.staff.length?DB.staff.map(s=>`<div style="padding:13px;border:1px solid var(--border);border-radius:14px;background:var(--bg2)"><div style="display:flex;gap:10px;align-items:center;margin-bottom:9px"><div class="avatar" style="width:38px;height:38px;font-size:15px">${esc((s.name||'S').charAt(0))}</div><div style="min-width:0"><div style="font-weight:800;font-size:12.5px">${esc(s.name)}</div><div class="muted" style="font-size:11px">${esc(s.profile||'—')}</div></div></div><a href="tel:${esc(s.mobile)}" style="color:var(--accent);font-size:12px;font-weight:700;text-decoration:none">📞 ${esc(s.mobile)}</a><div class="row-between" style="margin-top:10px"><button class="btn sm" onclick="staffModal('${s.id}')">✏️</button><button class="btn sm danger" onclick="deleteStaff('${s.id}')">🗑</button></div></div>`).join(''):`<div class="empty" style="grid-column:1/-1">No staff added</div>`}</div>
+  </div>`;
+};
+
+function productModal(id){
+  const p = id ? DB.products.find(x=>x.id===id) : {id:null,name:'',priceRange:'',details:'',image:''};
+  openModal(`
+    <div class="form-grid"><div class="full"><label class="fld">Tyre Photo</label><div style="display:flex;gap:12px;align-items:center"><img id="pvImg" src="${p.image||ph('NO IMAGE','#2a3050','#4f46e5')}" style="width:110px;height:82px;object-fit:cover;border-radius:11px;border:1px solid var(--border)"><div style="flex:1"><input type="file" accept="image/*" onchange="pickProductImage(this)"><div class="muted" style="font-size:11px;margin-top:5px">JPG / PNG — will be stored in cloud</div></div></div></div>
+      <div><label class="fld">Tyre Name</label><input id="pName" value="${esc(p.name)}" placeholder="e.g. MRF ZLX 165/80 R14"></div><div><label class="fld">Price Range</label><input id="pPrice" value="${esc(p.priceRange)}" placeholder="e.g. ₹3,200 – ₹3,800"></div><div class="full"><label class="fld">Details</label><textarea id="pDetails" placeholder="Specifications, warranty, fitment…">${esc(p.details||'')}</textarea></div></div>
+    <div class="hr"></div><div class="row-between"><span></span><div style="display:flex;gap:8px"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveProduct('${id||''}')">💾 Save Product</button></div></div>
+  `,{title: id?'✏️ Edit Product':'＋ Add Product'});
+}
+
+let __prodImg=null;
+function pickProductImage(input){ const f=input.files[0]; if(!f) return; const r=new FileReader(); r.onload=e=>{ __prodImg=e.target.result; $('#pvImg').src=__prodImg; }; r.readAsDataURL(f); }
+function saveProduct(id){
+  const name=$('#pName').value.trim(); if(!name){ toast('Product name is required','err'); return; }
+  const data={name, priceRange:$('#pPrice').value.trim()||'—', details:$('#pDetails').value.trim(), image:__prodImg || (id?DB.products.find(p=>p.id===id).image:ph(name.slice(0,8),'#4f46e5','#22d3ee'))};
+  if(id){ 
+    const i=DB.products.findIndex(p=>p.id===id); 
+    DB.products[i]=Object.assign(DB.products[i],data); 
+  } else { 
+    const newProd = Object.assign({id:uid('p')},data);
+    DB.products.push(newProd); 
+  }
+  saveLocal();
+  __prodImg=null; closeModal(); RENDER.products(); toast('Product saved','ok');
+}
+function deleteProduct(id){ 
+  if(!confirm('Delete this product?')) return; 
+  DB.products=DB.products.filter(p=>p.id!==id); 
+  saveLocal();
+  RENDER.products(); toast('Product deleted','ok'); 
+}
+
+function staffModal(id){
+  const s = id ? DB.staff.find(x=>x.id===id) : {id:null,name:'',mobile:'',profile:''};
+  openModal(`<div class="form-grid"><div><label class="fld">Staff Name</label><input id="sName" value="${esc(s.name)}"></div><div><label class="fld">Mobile Number</label><input id="sMobile" value="${esc(s.mobile)}"></div><div class="full"><label class="fld">Work Profile / Designation</label><input id="sProfile" value="${esc(s.profile)}" placeholder="e.g. Senior Sales Executive — North Zone"></div></div><div class="hr"></div><div class="row-between"><span></span><div style="display:flex;gap:8px"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveStaff('${id||''}')">💾 Save</button></div></div>`,{title: id?'✏️ Edit Staff':'＋ Add Staff'});
+}
+function saveStaff(id){
+  const data={name:$('#sName').value.trim(),mobile:$('#sMobile').value.trim(),profile:$('#sProfile').value.trim()};
+  if(!data.name){ toast('Staff name required','err'); return; }
+  if(id){ 
+    const i=DB.staff.findIndex(s=>s.id===id); 
+    DB.staff[i]=Object.assign(DB.staff[i],data); 
+  } else { 
+    const newStaff = Object.assign({id:uid('s')},data);
+    DB.staff.push(newStaff); 
+  }
+  saveLocal();
+  closeModal(); RENDER.products(); toast('Staff saved','ok');
+}
+function deleteStaff(id){ 
+  if(!confirm('Delete this staff member?')) return; 
+  DB.staff=DB.staff.filter(s=>s.id!==id); 
+  saveLocal();
+  RENDER.products(); toast('Staff deleted','ok'); 
+}
+
+function promptAdminPassword(callback) {
+  openModal(`
+    <div style="text-align:center; padding:10px">
+      <div style="font-size:36px; margin-bottom:10px">🔒</div>
+      <p class="muted" style="font-size:13px; margin-bottom:20px">Settings tab is restricted.<br>Please enter Admin Password to proceed.</p>
+      <input type="password" id="adminPass" placeholder="Enter admin password (default: 1234)" style="margin-bottom:15px; text-align:center">
+      <button class="btn primary" style="width:100%" onclick="verifyAdminPass('${callback}')">Unlock Settings</button>
+    </div>
+  `, {title:'Admin Verification'});
+}
+function verifyAdminPass(callback) {
+  const pass = $('#adminPass').value;
+  const admin = DB.users.find(u => u.role === 'Admin');
+  if (admin && admin.password === pass) { closeModal(); if (callback === 'render') RENDER.settings(); toast('Access Granted ✔', 'ok'); }
+  else { toast('Incorrect Admin Password', 'err'); }
+}
+
+RENDER.settings = function(){
+  if(currentUser().role !== 'Admin') {
+    $('#page-settings').innerHTML = `<div class="empty" style="padding:50px">🔒 Settings is locked. Verifying admin password...</div>`;
+    setTimeout(() => promptAdminPassword('render'), 100);
+    return;
+  }
+  $('#page-settings').innerHTML=`
+  <div class="page-head"><div><h1>Settings</h1><p class="muted">Users, permissions, columns, tagging, integrations & security</p></div></div>
+  <div class="grid-2">
+    <div class="card"><div class="card-head"><h3>👥 Users & Permissions</h3><button class="btn sm primary" onclick="userModal()">＋ Add User</button></div><div id="userList"></div></div>
+    <div class="card"><div class="card-head"><h3>🔀 Lead Management</h3></div>
+      <label class="fld">Transfer Leads From</label><select id="tfFrom" style="margin-bottom:10px">${DB.users.map(u=>`<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select>
+      <label class="fld">Transfer Leads To</label><select id="tfTo" style="margin-bottom:12px">${DB.users.map(u=>`<option value="${u.id}">${esc(u.name)}</option>`).join('')}</select>
+      <button class="btn primary" style="width:100%" onclick="transferLeads()">🔀 Transfer All Leads</button>
+      <div class="hr"></div><button class="btn danger" style="width:100%" onclick="deleteJunk()">🗑 Delete All Junk Leads</button>
+      <div class="hr"></div><button class="btn danger" style="width:100%" onclick="factoryReset()">⚠️ Reset Entire CRM (Factory)</button>
+    </div>
+    <div class="card"><div class="card-head"><h3>🎨 Appearance & Notifications</h3></div>
+      <div class="row-between" style="margin-bottom:12px"><span style="font-size:12.5px;font-weight:600">Theme</span><select style="width:130px" onchange="DB.settings.theme=this.value;applyTheme();saveLocal()"><option value="dark" ${DB.settings.theme==='dark'?'selected':''}>Dark</option><option value="light" ${DB.settings.theme==='light'?'selected':''}>Light</option></select></div>
+      <div class="row-between"><span style="font-size:12.5px;font-weight:600">Notifications (reminders & follow-ups)</span><label class="switch"><input type="checkbox" ${DB.settings.notifications?'checked':''} onchange="DB.settings.notifications=this.checked;saveLocal();toast('Notifications '+(this.checked?'ON':'OFF'),'ok')"><span class="slider"></span></label></div>
+    </div>
+    <div class="card"><div class="card-head"><h3>🔌 Integrations</h3></div>
+      <label class="fld">WhatsApp Number (with country code)</label><input id="setWa" value="${esc(DB.settings.whatsapp)}" placeholder="919876543210" style="margin-bottom:10px">
+      <label class="fld">Telegram Chat ID / Bot Token</label><input id="setTg" value="${esc(DB.settings.telegram)}" placeholder="123456789:AAH... or @channel" style="margin-bottom:12px">
+      <button class="btn primary" style="width:100%" onclick="saveIntegrations()">💾 Save Integrations</button>
+    </div>
+    <div class="card"><div class="card-head"><h3>🔒 Password & Security</h3></div>
+      <label class="fld">Current Password</label><input type="password" id="pwOld" placeholder="••••" style="margin-bottom:10px">
+      <label class="fld">New Password</label><input type="password" id="pwNew" placeholder="••••" style="margin-bottom:12px">
+      <button class="btn primary" style="width:100%" onclick="changePassword()">🔑 Update Password</button>
+    </div>
+    <div class="card"><div class="card-head"><h3>🗂️ Lead Table Columns</h3></div>
+      <div id="colList" style="margin-bottom:12px"></div>
+      <div style="display:flex;gap:8px"><input id="newColName" placeholder="New column name (e.g. GST Number)"><button class="btn primary" onclick="addColumn()">＋ Add</button></div>
+    </div>
+    <div class="card"><div class="card-head"><h3>🏷️ Tagging Options</h3></div>
+      <div style="margin-bottom:12px">${DB.tags.map(t=>`<span class="chip">${esc(t)}<button onclick="removeTag('${esc(t)}')">✕</button></span>`).join('')}</div>
+      <div style="display:flex;gap:8px"><input id="newTag" placeholder="New tagging name"><button class="btn primary" onclick="addTag()">＋ Add</button></div>
+    </div>
+  </div>`;
+  renderUserList(); renderColList();
+};
+
+function renderUserList(){
+  const box=$('#userList'); if(!box) return;
+  box.innerHTML=DB.users.map(u=>`
+    <div style="padding:11px;border:1px solid var(--border);border-radius:12px;margin-bottom:10px;background:var(--bg2)">
+      <div class="row-between" style="margin-bottom:9px">
+        <div style="display:flex;gap:9px;align-items:center"><div class="avatar">${esc(u.name.charAt(0))}</div><div><div style="font-weight:800;font-size:12.5px">${esc(u.name)} ${u.id===DB.settings.currentUserId?'<span class="tag default" style="margin-left:4px">You</span>':''}</div><div class="muted" style="font-size:11px">${esc(u.email||'')} • ${esc(u.role)}</div></div></div>
+        <div style="display:flex;gap:6px"><button class="btn sm" onclick="userModal('${u.id}')">✏️</button>${DB.users.length>1?`<button class="btn sm danger" onclick="deleteUser('${u.id}')">🗑</button>`:''}</div>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px">${PAGES.map(p=>`<label class="chip" style="cursor:pointer;margin:0;padding:5px 9px;font-size:11px"><input type="checkbox" ${u.perms&&u.perms[p]?'checked':''} ${u.role==='Admin'?'disabled':''} onchange="togglePerm('${u.id}','${p}',this.checked)" style="width:auto;margin:0">${PAGE_META[p].label}</label>`).join('')}</div>
+    </div>`).join('');
+}
+
+function togglePerm(uid,perm,val){
+  const u=DB.users.find(x=>x.id===uid); if(!u) return;
+  if(u.role==='Admin'){ toast('Admin users always have all permissions','info'); renderUserList(); return; }
+  u.perms=u.perms||{}; u.perms[perm]=val?1:0; 
+  saveLocal();
+  renderUserList(); toast('Permission updated','ok');
+}
+
+function userModal(id){
+  const u = id ? DB.users.find(x=>x.id===id) : {id:null,name:'',email:'',password:'',role:'Sales'};
+  openModal(`
+    <div class="form-grid"><div><label class="fld">Full Name</label><input id="uName" value="${esc(u.name)}"></div><div><label class="fld">Email</label><input id="uEmail" value="${esc(u.email||'')}"></div><div><label class="fld">Role</label><select id="uRole"><option value="Sales" ${u.role==='Sales'?'selected':''}>Sales</option><option value="Admin" ${u.role==='Admin'?'selected':''}>Admin</option></select></div><div><label class="fld">Password</label><input id="uPass" type="text" value="${esc(u.password||'')}"></div></div>
+    <div class="muted" style="font-size:11.5px;margin-top:10px">Admin role always has all permissions. Sales role uses the checkboxes in the user list.</div>
+    <div class="hr"></div><div class="row-between"><span></span><div style="display:flex;gap:8px"><button class="btn" onclick="closeModal()">Cancel</button><button class="btn primary" onclick="saveUser('${id||''}')">💾 Save User</button></div></div>
+  `,{title: id?'✏️ Edit User':'＋ Add User'});
+}
+
+function saveUser(id){
+  const name=$('#uName').value.trim(); if(!name){ toast('Name is required','err'); return; }
+  const data={name,email:$('#uEmail').value.trim(),role:$('#uRole').value,password:$('#uPass').value||'1234'};
+  
+  if(id){ 
+    const u=DB.users.find(x=>x.id===id); 
+    Object.assign(u,data); 
+    if(u.role==='Admin'){ PAGES.forEach(p=>u.perms[p]=1); }
+  } else { 
+    const perms={}; 
+    PAGES.forEach(p=>perms[p]= data.role==='Admin' ? 1 : (p==='settings'?0:1)); 
+    const newUser = Object.assign({id:uid('u'),perms},data);
+    DB.users.push(newUser); 
+  }
+  saveLocal();
+  closeModal(); renderUserList(); updateTopbar(); renderNav(); toast('User saved','ok');
+}
+
+function deleteUser(id){
+  if(DB.users.length<=1){ toast('At least one user required','err'); return; }
+  if(!confirm('Delete this user? Their leads will be reassigned to the first user.')) return;
+  const fallback=DB.users.find(u=>u.id!==id).id;
+  
+  DB.leads.forEach(l=>{ if(l.assignedTo===id) l.assignedTo=fallback; });
+  DB.users=DB.users.filter(u=>u.id!==id);
+  if(DB.settings.currentUserId===id) DB.settings.currentUserId=fallback;
+  
+  saveLocal();
+  renderUserList(); updateTopbar(); renderNav(); toast('User deleted','ok');
+}
+
+async function transferLeads(){
+  const from=$('#tfFrom').value, to=$('#tfTo').value;
+  if(from===to){ toast('Source and destination must differ','err'); return; }
+  let n=0; 
+  for(const l of DB.leads){
+    if(l.assignedTo===from){ 
+      l.assignedTo=to; 
+      n++; 
+      await fetch(`${API_URL}/api/leads/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...l, id: l.id })
+      });
+    } 
+  }
+  updateTopbar(); toast(`${n} leads transferred`,'ok'); RENDER[UI.page]&&RENDER[UI.page]();
+}
+
+async function deleteJunk(){
+  const junkLeads = DB.leads.filter(l=>l.tagging==='Junk');
+  const n = junkLeads.length;
+  if(!n){ toast('No junk leads found','info'); return; }
+  if(!confirm(`Delete ${n} junk leads permanently?`)) return;
+  
+  for(const l of junkLeads){
+    await fetch(`${API_URL}/api/leads/delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: l.id })
+    });
+  }
+  
+  DB.leads=DB.leads.filter(l=>l.tagging!=='Junk'); 
+  updateTopbar(); RENDER.settings(); toast(n+' junk leads deleted','ok');
+}
+
+async function factoryReset(){
+  if(!confirm('This will erase ALL data and restore demo data. Continue?')) return;
+  DB = loadLocal(); // reset local
+  DB.settings.currentUserId = null;
+  DB.leads = [];
+  saveLocal();
+  // Cloudflare data won't be auto-deleted here (requires API endpoint), just logout
+  $('#mainApp').classList.remove('show');
+  $('#loginScreen').style.display = 'flex';
+  $('#loginPass').value = '';
+  toast('CRM reset to factory demo data. Please login.','ok');
+}
+
+function saveIntegrations(){ 
+  DB.settings.whatsapp=$('#setWa').value.trim(); 
+  DB.settings.telegram=$('#setTg').value.trim(); 
+  saveLocal();
+  toast('Integrations saved','ok'); 
+}
+
+function changePassword(){
+  const u=currentUser(); const oldP=$('#pwOld').value, newP=$('#pwNew').value;
+  if(oldP!==u.password){ toast('Current password is incorrect','err'); return; }
+  if(!newP || newP.length<4){ toast('New password must be at least 4 characters','err'); return; }
+  u.password=newP; 
+  saveLocal();
+  $('#pwOld').value=''; $('#pwNew').value=''; toast('Password updated successfully','ok');
+}
+
+function renderColList(){
+  const box=$('#colList'); if(!box) return;
+  box.innerHTML=DB.columns.map((c,i)=>`<div class="row-between" style="padding:8px 0;border-bottom:1px solid var(--border)"><div style="display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600"><input type="checkbox" style="width:auto" ${c.visible?'checked':''} onchange="DB.columns[${i}].visible=this.checked;saveLocal();renderColList()">${esc(c.label)}</div><div style="display:flex;gap:5px"><button class="btn sm" onclick="moveCol(${i},-1)" ${i===0?'disabled':''}>↑</button><button class="btn sm" onclick="moveCol(${i},1)" ${i===DB.columns.length-1?'disabled':''}>↓</button><button class="btn sm danger" onclick="removeColumn(${i})">✕</button></div></div>`).join('');
+}
+function moveCol(i,dir){ const j=i+dir; if(j<0||j>=DB.columns.length) return; [DB.columns[i],DB.columns[j]]=[DB.columns[j],DB.columns[i]]; saveLocal(); renderColList(); toast('Column moved','ok'); }
+function removeColumn(i){
+  const c=DB.columns[i];
+  if(BASE_FIELDS.some(b=>b.key===c.key)){ if(!confirm(`"${c.label}" is a core field. Hide it instead of deleting?`)) return; DB.columns[i].visible=false; saveLocal(); renderColList(); return; }
+  if(!confirm(`Delete column "${c.label}" and its data from all leads?`)) return;
+  
+  DB.leads.forEach(l=>{ delete l[c.key]; });
+  DB.columns.splice(i,1); 
+  saveLocal();
+  renderColList(); toast('Column removed','ok');
+}
+function addColumn(){
+  const name=$('#newColName').value.trim(); if(!name){ toast('Enter a column name','err'); return; }
+  if(DB.columns.some(c=>c.label.toLowerCase()===name.toLowerCase())){ toast('Column already exists','err'); return; }
+  DB.columns.push({key:'cf_'+uid(''),label:name,type:'text',visible:true}); 
+  $('#newColName').value=''; 
+  saveLocal();
+  renderColList(); toast('Column added','ok');
+}
+function addTag(){
+  const t=$('#newTag').value.trim(); if(!t){ toast('Enter a tagging name','err'); return; }
+  if(DB.tags.includes(t)){ toast('Tagging already exists','err'); return; }
+  DB.tags.push(t); 
+  $('#newTag').value=''; 
+  saveLocal();
+  RENDER.settings(); toast('Tagging added','ok');
+}
+function removeTag(t){
+  if(!confirm(`Remove tagging "${t}"? Leads with this tag will keep the value.`)) return;
+  DB.tags=DB.tags.filter(x=>x!==t); 
+  saveLocal();
+  RENDER.settings(); toast('Tagging removed','ok');
+}
 
 boot();
-window.addEventListener('keydown',e=>{ if(e.key==='Escape') closeModal(); if(e.key==='Enter' && $('#loginScreen')?.style.display !== 'none') doLogin(); });
+
+window.addEventListener('keydown',e=>{ 
+  if(e.key==='Escape') closeModal(); 
+  if(e.key==='Enter' && $('#loginScreen')?.style.display !== 'none') doLogin();
+});
+</script>
+<script>
+  document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  document.addEventListener('cut', function (e) { e.preventDefault(); });
+  document.addEventListener('copy', function (e) { e.preventDefault(); });
+  document.addEventListener('paste', function (e) { e.preventDefault(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.ctrlKey && (e.key === 'c' || e.key === 'C' || e.key === 'x' || e.key === 'X' || e.key === 'v' || e.key === 'V' || e.key === 'u' || e.key === 'U') || e.key === 'F12') {
+      e.preventDefault();
+    }
+  });
 </script>
 </body>
 </html>
