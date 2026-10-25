@@ -878,10 +878,12 @@ async function importMapped(silent){
   if(!u.map.name && !u.map.mobile){ toast('Map at least Name or Mobile column','err'); return; }
   
   const btn = document.querySelector('#mapArea .btn.primary');
-  if(btn){ btn.disabled = true; btn.textContent = "Importing Bulk..."; }
+  if(btn){ btn.disabled = true; btn.textContent = "Preparing..."; }
 
   let added=0, skipped=0;
   let newLeads = [];
+  
+  // 1. Pehle local array banayein (duplicate check ke saath)
   u.rows.forEach(r=>{
     const lead=rowToLead(r,u);
     if(!lead.name && !lead.mobile){ skipped++; return; }
@@ -891,26 +893,43 @@ async function importMapped(silent){
     added++;
   });
   
+  // 2. Ab cloud par 50-50 ke chunks mein bhejein taaki timeout na ho
   if(newLeads.length > 0) {
-    try {
-      await fetch(`${API_URL}/api/leads/sync`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newLeads) 
-      });
-    } catch(err) {
-      toast('Bulk import failed. Check internet.', 'err');
-      console.error(err);
+    const CHUNK_SIZE = 50;
+    let uploaded = 0;
+
+    for (let i = 0; i < newLeads.length; i += CHUNK_SIZE) {
+      const chunk = newLeads.slice(i, i + CHUNK_SIZE);
+      
+      if(btn) btn.textContent = `Uploading ${uploaded}/${newLeads.length}...`;
+      
+      try {
+        const res = await fetch(`${API_URL}/api/leads/sync`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(chunk) 
+        });
+        
+        if(!res.ok) {
+          throw new Error(`Server error: ${res.status}`);
+        }
+        uploaded += chunk.length;
+      } catch(err) {
+        toast(`Error uploading batch ${i/CHUNK_SIZE + 1}. Check internet.`, 'err');
+        console.error('Chunk upload failed:', err);
+        // Agar koi batch fail hota hai, toh aage badhne ke bajaye ruk jayein
+        if(btn) { btn.disabled = false; btn.textContent = "Retry Import"; }
+        return;
+      }
     }
   }
   
   updateTopbar();
   
-  if(!silent){ toast(`Imported ${added} leads (${skipped} skipped) successfully!`,'ok'); }
+  if(!silent){ toast(`Successfully uploaded ${added} leads to cloud! (${skipped} skipped)`,'ok'); }
   UI.upload=null; const area=$('#mapArea'); if(area) area.innerHTML='';
   if(UI.page==='uploads') RENDER.uploads(); else if(UI.page==='leads') RENDER.leads();
 }
-
   
 async function fetchSheet(silent=false){
   const urlInput = ($('#gsUrl')||{}).value || DB.settings.sheetUrl;
