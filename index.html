@@ -523,6 +523,8 @@ async function boot() {
 function doLogin(){
   const id = $('#loginId').value.trim().toLowerCase();
   const pass = $('#loginPass').value;
+  
+  // NOTE: DB.users is now fetched from Cloud on boot, so it will have the latest password.
   const user = DB.users.find(u => (u.email.toLowerCase() === id || u.name.toLowerCase() === id) && u.password === pass);
   
   if(!user){ toast('Invalid Email/User ID or Password','err'); return; }
