@@ -414,7 +414,8 @@ async function saveLocal() {
       body: JSON.stringify({
         settings: DB.settings,
         users: DB.users,
-        columns: DB.columns
+        columns: DB.columns,
+        tags: DB.tags // 🔥 Naya tag cloud par bhi save hoga
       })
     });
   } catch(e) { console.error('Cloud sync failed', e); }
@@ -1827,16 +1828,36 @@ function addColumn(){
 function addTag(){
   const t=$('#newTag').value.trim(); if(!t){ toast('Enter a tagging name','err'); return; }
   if(DB.tags.includes(t)){ toast('Tagging already exists','err'); return; }
+  
   DB.tags.push(t); 
   $('#newTag').value=''; 
   saveLocal();
-  RENDER.settings(); toast('Tagging added','ok');
+  
+  // 🔥 Settings page ko turant refresh karein
+  RENDER.settings(); 
+  
+  // 🔥 Agar Leads page khula hai, toh usko bhi turant refresh karein
+  if(UI.page === 'leads') {
+    RENDER.leads();
+  }
+  
+  toast('Tagging added','ok');
 }
 function removeTag(t){
   if(!confirm(`Remove tagging "${t}"? Leads with this tag will keep the value.`)) return;
+  
   DB.tags=DB.tags.filter(x=>x!==t); 
   saveLocal();
-  RENDER.settings(); toast('Tagging removed','ok');
+  
+  // 🔥 Settings page ko turant refresh karein
+  RENDER.settings();
+  
+  // 🔥 Agar Leads page khula hai, toh usko bhi turant refresh karein
+  if(UI.page === 'leads') {
+    RENDER.leads();
+  }
+  
+  toast('Tagging removed','ok');
 }
 
 boot();
