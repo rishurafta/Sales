@@ -344,6 +344,7 @@ const BASE_FIELDS=[
   {key:'followUpDate',label:'Follow Up Date',type:'date'},
   {key:'followUpTime',label:'Follow Up Time',type:'time'},
   {key:'visitDate',   label:'Visit Date',    type:'date'},
+  {key:'visitTime',   label:'Visit Time',    type:'time'},
   {key:'remarks',     label:'Remarks',       type:'textarea'}
 ];
 const DEFAULT_TAGS=['Hot','Warm','Cold','Junk','Purchased','Follow Up','Visited','Quotation Sent'];
@@ -744,7 +745,8 @@ RENDER.dashboard = function(){
           <td>${esc(l.shopName||'—')}</td><td>${esc(l.city||'—')}</td><td>${esc(l.leadSource||'—')}</td>
           <td><span class="tag ${esc(l.tagging||'default')}">${esc(l.tagging||'—')}</span></td>
           <td>${esc(userName(l.assignedTo))}</td>
-          <td>${prettyDate(l.followUpDate)}</td><td>${prettyDate(l.visitDate)}</td>
+          <td>${prettyDate(l.followUpDate)} ${l.followUpTime?`<span class="muted" style="font-size:11px">${l.followUpTime}</span>`:''}</td>
+          <td>${prettyDate(l.visitDate)} ${l.visitTime?`<span class="muted" style="font-size:11px">${l.visitTime}</span>`:''}</td>
         </tr>`).join('') || `<tr><td colspan="8" class="empty">No leads in this period</td></tr>`}
       </tbody></table></div>
   </div>`;
@@ -754,10 +756,12 @@ function miniList(list,dateKey,emptyMsg){
   if(!list.length) return `<div class="empty">${emptyMsg}</div>`;
   const t=today();
   return list.map(l=>{
+    const timeKey = dateKey === 'followUpDate' ? 'followUpTime' : (dateKey === 'visitDate' ? 'visitTime' : null);
+    const timeVal = timeKey ? l[timeKey] : '';
     const overdue = l[dateKey] && l[dateKey]<t;
     return `<div class="row-between" style="padding:9px 0;border-bottom:1px solid var(--border)">
       <div style="min-width:0"><div style="font-weight:700;font-size:12.5px">${esc(l.name||'Unnamed')}</div><div class="muted" style="font-size:11px">${esc(l.shopName||'')} • ${esc(l.mobile||'')} • ${esc(l.city||'')}</div></div>
-      <div style="text-align:right;flex:0 0 auto"><div style="font-size:11px;font-weight:800;color:${overdue?'var(--danger)':'var(--accent)'}">${prettyDate(l[dateKey])}</div><button class="btn sm" style="margin-top:5px" onclick="editLead('${l.id}')">Open</button></div>
+      <div style="text-align:right;flex:0 0 auto"><div style="font-size:11px;font-weight:800;color:${overdue?'var(--danger)':'var(--accent)'}">${prettyDate(l[dateKey])} ${timeVal?`<span style="font-weight:600">${timeVal}</span>`:''}</div><button class="btn sm" style="margin-top:5px" onclick="editLead('${l.id}')">Open</button></div>
     </div>`;
   }).join('');
 }
@@ -769,16 +773,17 @@ function dashList(key,title){
     <div class="tbl-wrap" style="max-height:60vh"><table>
       <thead><tr><th>Name</th><th>Mobile</th><th>Shop</th><th>City</th><th>Tagging</th><th>Assigned</th><th>Follow Up</th><th>Visit</th><th class="action-col">Action</th></tr></thead>
       <tbody>${list.map(l=>`<tr><td><b>${esc(l.name||'—')}</b></td><td>${esc(l.mobile||'—')}</td><td>${esc(l.shopName||'—')}</td><td>${esc(l.city||'—')}</td>
-        <td><span class="tag ${esc(l.tagging||'default')}">${esc(l.tagging||'—')}</span></td><td>${esc(userName(l.assignedTo))}</td><td>${prettyDate(l.followUpDate)}</td><td>${prettyDate(l.visitDate)}</td>
+        <td><span class="tag ${esc(l.tagging||'default')}">${esc(l.tagging||'—')}</span></td><td>${esc(userName(l.assignedTo))}</td>
+        <td>${prettyDate(l.followUpDate)} ${l.followUpTime?`<span class="muted" style="font-size:11px">${l.followUpTime}</span>`:''}</td>
+        <td>${prettyDate(l.visitDate)} ${l.visitTime?`<span class="muted" style="font-size:11px">${l.visitTime}</span>`:''}</td>
         <td class="action-col"><button class="btn sm primary" onclick="closeModal();editLead('${l.id}')">Open</button></td></tr>`).join('')}</tbody>
     </table></div>`,{title:title+' ('+list.length+')',wide:true});
 }
 
 function openNotifications(){
   const t = today();
-  const nowTime = new Date().toTimeString().slice(0,5); // Aaj ka current time HH:MM
-
-  // Filter: Aaj ke follow-ups (time ke sath) + Aaj ke visits + Overdue follow-ups
+  
+  // Filter: Aaj ke follow-ups + Aaj ke visits + Overdue follow-ups
   const items = DB.leads.filter(l => {
     if(isClosed(l)) return false;
     
@@ -916,7 +921,7 @@ function rowToLead(row,u){
     id:uid('ld'), createdAt:Date.now(), remarksHistory:[], taggingHistory:[], customData:{}
   };
   
-  const baseKeys = ['id','leadSource','entryDate','mobile','name','city','state','shopName','orderAmount','orderQty','tagging','followUpDate','visitDate','remarks','remarksHistory','assignedTo','createdAt','customData','taggingHistory'];
+  const baseKeys = ['id','leadSource','entryDate','mobile','name','city','state','shopName','orderAmount','orderQty','tagging','followUpDate','followUpTime','visitDate','visitTime','remarks','remarksHistory','assignedTo','createdAt','customData','taggingHistory'];
 
   DB.columns.forEach(c => {
     let val = get(c.key);
@@ -1320,7 +1325,7 @@ function exportLeads(){
 
 function editLead(id){
   const l = id ? DB.leads.find(x=>x.id===id) : null;
-  const d = l || {id:null, leadSource:'', entryDate:today(), mobile:'', name:'', city:'', state:'', shopName:'', orderAmount:'', orderQty:'', tagging:DB.tags[0]||'Hot', followUpDate:'', visitDate:'', remarks:'', assignedTo:DB.settings.currentUserId};
+  const d = l || {id:null, leadSource:'', entryDate:today(), mobile:'', name:'', city:'', state:'', shopName:'', orderAmount:'', orderQty:'', tagging:DB.tags[0]||'Hot', followUpDate:'', followUpTime:'', visitDate:'', visitTime:'', remarks:'', assignedTo:DB.settings.currentUserId};
   
   const fieldHtml = DB.columns.map(c=>{
     const isTextarea=c.key==='remarks'||c.type==='textarea'; 
