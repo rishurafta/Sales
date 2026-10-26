@@ -516,6 +516,10 @@ async function fetchLeads() {
           }
         } catch(e) { console.error("Tagging history parse error", e); }
 
+        // 🔥 TIME FIELDS FIX: Ensure time is loaded from DB correctly
+        if (l.followUpTime) finalLead.followUpTime = l.followUpTime;
+        if (l.visitTime) finalLead.visitTime = l.visitTime;
+
         return {
           ...finalLead,
           orderAmount: Number(finalLead.orderAmount),
@@ -564,12 +568,11 @@ async function fetchUsers() {
   }
 }
 
+// 🔥 FIX: Clear Local Storage forcefully before reload
 function clearLocalAndReload() {
   if(confirm('This will clear your local cache and log you out. Continue?')) {
-    localStorage.removeItem(LS_KEY);
-    if (typeof DB !== 'undefined' && DB.settings) {
-      DB.settings.currentUserId = null;
-    }
+    localStorage.clear(); 
+    sessionStorage.clear();
     location.reload();
   }
 }
@@ -616,6 +619,8 @@ function doLogin(){
     return;
   }
   
+  // 🔥 FIX: Force clear old session and set new user
+  localStorage.clear();
   DB.settings.currentUserId = user.id;
   saveLocal();
   
