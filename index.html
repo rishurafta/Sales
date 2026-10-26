@@ -578,6 +578,9 @@ async function boot() {
     $('#loginScreen').style.display = 'none';
     $('#mainApp').classList.add('show');
     
+    // 🔥 YAHAN FIX HAI: Topbar update karo taaki naam dikhe
+    updateTopbar(); 
+    
     // 🔥 Page Refresh Fix: Save tab
     const savedPage = localStorage.getItem(LAST_PAGE_KEY) || 'dashboard';
     go(savedPage); 
