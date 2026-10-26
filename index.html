@@ -325,7 +325,18 @@ const fmtDate = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate(
 const today = () => fmtDate(new Date());
 const money = n => '₹'+Number(n||0).toLocaleString('en-IN');
 function addDays(ds,n){ const d=new Date(ds+'T00:00:00'); d.setDate(d.getDate()+n); return fmtDate(d); }
-function prettyDate(s){ if(!s) return '—'; const p=String(s).split('-'); return p.length===3?`${p[2]}-${p[1]}-${p[0]}`:s; }
+
+// 🔥 DATE FORMAT: DD-MMM-YYYY
+function prettyDate(s){ 
+  if(!s) return '—'; 
+  const p=String(s).split('-'); 
+  if(p.length !== 3) return s;
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const day = p[2];
+  const month = months[parseInt(p[1]) - 1] || p[1];
+  const year = p[0];
+  return `${day}-${month}-${year}`;
+}
 
 // ⚠️ YAHAN APNA CLOUDFLARE WORKER URL DAALEIN
 const API_URL = "https://chourasiyatyre.rishurafta.workers.dev";
@@ -580,10 +591,8 @@ async function boot() {
     $('#loginScreen').style.display = 'none';
     $('#mainApp').classList.add('show');
     
-    // 🔥 YAHAN FIX HAI: Topbar update karo taaki naam dikhe
     updateTopbar(); 
     
-    // 🔥 Page Refresh Fix: Save tab
     const savedPage = localStorage.getItem(LAST_PAGE_KEY) || 'dashboard';
     go(savedPage); 
   } else {
@@ -623,7 +632,7 @@ function confirmLogout(){
   if(!confirm('Are you sure you want to log out?')) return;
   DB.settings.currentUserId = null;
   saveLocal();
-  localStorage.removeItem(LAST_PAGE_KEY); // Logout ke baad page reset
+  localStorage.removeItem(LAST_PAGE_KEY); 
   $('#mainApp').classList.remove('show');
   $('#loginScreen').style.display = 'flex';
   $('#loginPass').value = '';
@@ -665,7 +674,6 @@ function go(page){
   if(el){ el.classList.add('active'); RENDER[page] && RENDER[page](); }
   $('#sidebar').classList.remove('open');
   
-  // 🔥 YAHAN FIX HAI: Ab page hamesha save hoga (Dashboard bhi)
   if(DB.settings.currentUserId) {
     localStorage.setItem(LAST_PAGE_KEY, page);
   }
@@ -745,8 +753,8 @@ RENDER.dashboard = function(){
           <td>${esc(l.shopName||'—')}</td><td>${esc(l.city||'—')}</td><td>${esc(l.leadSource||'—')}</td>
           <td><span class="tag ${esc(l.tagging||'default')}">${esc(l.tagging||'—')}</span></td>
           <td>${esc(userName(l.assignedTo))}</td>
-          <td>${prettyDate(l.followUpDate)} ${l.followUpTime?`<span class="muted" style="font-size:11px">${l.followUpTime}</span>`:''}</td>
-          <td>${prettyDate(l.visitDate)} ${l.visitTime?`<span class="muted" style="font-size:11px">${l.visitTime}</span>`:''}</td>
+          <td>${prettyDate(l.followUpDate)} ${l.followUpTime?`<br><span class="muted" style="font-size:11px">🕐 ${l.followUpTime}</span>`:''}</td>
+          <td>${prettyDate(l.visitDate)} ${l.visitTime?`<br><span class="muted" style="font-size:11px">🕐 ${l.visitTime}</span>`:''}</td>
         </tr>`).join('') || `<tr><td colspan="8" class="empty">No leads in this period</td></tr>`}
       </tbody></table></div>
   </div>`;
@@ -774,8 +782,8 @@ function dashList(key,title){
       <thead><tr><th>Name</th><th>Mobile</th><th>Shop</th><th>City</th><th>Tagging</th><th>Assigned</th><th>Follow Up</th><th>Visit</th><th class="action-col">Action</th></tr></thead>
       <tbody>${list.map(l=>`<tr><td><b>${esc(l.name||'—')}</b></td><td>${esc(l.mobile||'—')}</td><td>${esc(l.shopName||'—')}</td><td>${esc(l.city||'—')}</td>
         <td><span class="tag ${esc(l.tagging||'default')}">${esc(l.tagging||'—')}</span></td><td>${esc(userName(l.assignedTo))}</td>
-        <td>${prettyDate(l.followUpDate)} ${l.followUpTime?`<span class="muted" style="font-size:11px">${l.followUpTime}</span>`:''}</td>
-        <td>${prettyDate(l.visitDate)} ${l.visitTime?`<span class="muted" style="font-size:11px">${l.visitTime}</span>`:''}</td>
+        <td>${prettyDate(l.followUpDate)} ${l.followUpTime?`<br><span class="muted" style="font-size:11px">🕐 ${l.followUpTime}</span>`:''}</td>
+        <td>${prettyDate(l.visitDate)} ${l.visitTime?`<br><span class="muted" style="font-size:11px">🕐 ${l.visitTime}</span>`:''}</td>
         <td class="action-col"><button class="btn sm primary" onclick="closeModal();editLead('${l.id}')">Open</button></td></tr>`).join('')}</tbody>
     </table></div>`,{title:title+' ('+list.length+')',wide:true});
 }
@@ -783,19 +791,15 @@ function dashList(key,title){
 function openNotifications(){
   const t = today();
   
-  // Filter: Aaj ke follow-ups + Aaj ke visits + Overdue follow-ups
   const items = DB.leads.filter(l => {
     if(isClosed(l)) return false;
-    
     const isFollowUpToday = l.followUpDate === t;
     const isVisitToday = l.visitDate === t;
     const isOverdue = l.followUpDate && l.followUpDate < t;
-    
     return isFollowUpToday || isVisitToday || isOverdue;
   });
 
   openModal(items.length ? items.map(l => {
-    // Time format karo
     const fTime = l.followUpTime ? ` at ${l.followUpTime}` : '';
     const vTime = l.visitTime ? ` at ${l.visitTime}` : '';
     
@@ -1175,7 +1179,7 @@ RENDER.leads = function(){
     if(c.key==='followUpDate' || c.key==='visitDate' || c.key==='entryDate') {
     const timeKey = c.key === 'followUpDate' ? 'followUpTime' : (c.key === 'visitDate' ? 'visitTime' : null);
     const timeVal = timeKey ? l[timeKey] : '';
-    return prettyDate(v) + (timeVal ? ` <span class="muted" style="font-size:11px">${timeVal}</span>` : '');
+    return prettyDate(v) + (timeVal ? ` <span class="muted" style="font-size:11px">🕐 ${timeVal}</span>` : '');
 }
     if(c.key==='mobile') return v?`<a href="tel:${esc(v)}" style="color:var(--accent);text-decoration:none">${esc(v)}</a>`:'—';
     if(c.key==='remarks') return `<span title="${esc(v||'')}">${esc(String(v||'—').slice(0,34))}${String(v||'').length>34?'…':''}</span>`;
@@ -1687,10 +1691,8 @@ function verifyAdminPass(callback) {
   const admin = DB.users.find(u => u.role === 'Admin');
   
   if (admin && admin.password === pass) { 
-    closeModal(); // Pehle modal band karo
+    closeModal(); 
     toast('Access Granted ✔', 'ok'); 
-    
-    // 🔥 Yahan check karo: Agar callback render hai, toh settings page render karo
     if (callback === 'render') {
       RENDER.settings(); 
     }
