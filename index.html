@@ -265,11 +265,11 @@ tbody tr:hover td { background: rgba(99,102,241,.09) !important; }
     <p>Please sign in to your account</p>
     <div style="margin-bottom:14px">
       <label class="fld">Email / User ID</label>
-      <input id="loginId" placeholder="Enter your email" style="margin-bottom:4px">
+      <input id="loginId" placeholder="Enter your email" style="margin-bottom:4px" onkeydown="if(event.key==='Enter'){ doLogin(); }">
     </div>
     <div style="margin-bottom:20px">
       <label class="fld">Password</label>
-      <input id="loginPass" type="password" placeholder="Enter password">
+      <input id="loginPass" type="password" placeholder="Enter password" onkeydown="if(event.key==='Enter'){ doLogin(); }">
     </div>
     <button class="btn primary" style="width:100%;padding:12px" onclick="doLogin()">Sign In →</button>
     <div style="margin-top:16px; font-size:11px; color:var(--muted)">
@@ -373,6 +373,7 @@ function ph(label,c1,c2){
 }
 
 const LS_KEY = 'tyro_crm_local_v2';
+const LAST_PAGE_KEY = 'tyro_crm_last_page';
 
 function loadLocal() {
   try {
@@ -415,7 +416,7 @@ async function saveLocal() {
         settings: DB.settings,
         users: DB.users,
         columns: DB.columns,
-        tags: DB.tags // 🔥 Naya tag cloud par bhi save hoga
+        tags: DB.tags
       })
     });
   } catch(e) { console.error('Cloud sync failed', e); }
@@ -489,7 +490,6 @@ async function fetchLeads() {
       DB.leads = (data.leads || []).map(l => {
         let finalLead = { ...l };
         
-        // 🔥 Custom Data ko merge karein
         try {
           if (l.customData && l.customData !== '{}' && l.customData !== 'null') {
             const custom = typeof l.customData === 'string' ? JSON.parse(l.customData) : l.customData;
@@ -497,7 +497,6 @@ async function fetchLeads() {
           }
         } catch(e) { console.error("Custom data parse error", e); }
 
-        // 🔥 Tagging History format karein
         try {
           if (typeof l.taggingHistory === 'string') {
             finalLead.taggingHistory = JSON.parse(l.taggingHistory || '[]');
@@ -511,22 +510,17 @@ async function fetchLeads() {
         };
       });
 
-      // 1. Settings load karein
       if(data.settings) DB.settings = { ...DB.settings, ...data.settings };
-      
-      // 2. Users load karein
       if(data.users && data.users.length > 0) DB.users = data.users;
       
-      // 3. 🔥 Tags load karein (Cloud se aaye hue tags ko use karein)
       if(data.settings && data.settings.tags && data.settings.tags.length > 0) {
         DB.tags = data.settings.tags;
       } else if(data.tags && data.tags.length > 0) {
         DB.tags = data.tags;
       } else if(!DB.tags || DB.tags.length === 0) {
-        DB.tags = DEFAULT_TAGS.slice(); // Fallback
+        DB.tags = DEFAULT_TAGS.slice();
       }
       
-      // 4. Columns load karein
       if(data.columns && data.columns.length > 0) {
         DB.columns = data.columns;
       } else {
@@ -583,7 +577,10 @@ async function boot() {
   if (DB.settings.currentUserId && DB.users.some(u=>u.id===DB.settings.currentUserId)) {
     $('#loginScreen').style.display = 'none';
     $('#mainApp').classList.add('show');
-    renderNav(); updateTopbar(); go('dashboard');
+    
+    // 🔥 Page Refresh Fix: Save tab
+    const savedPage = localStorage.getItem(LAST_PAGE_KEY) || 'dashboard';
+    go(savedPage); 
   } else {
     $('#loginScreen').style.display = 'flex';
     $('#mainApp').classList.remove('show');
@@ -621,6 +618,7 @@ function confirmLogout(){
   if(!confirm('Are you sure you want to log out?')) return;
   DB.settings.currentUserId = null;
   saveLocal();
+  localStorage.removeItem(LAST_PAGE_KEY); // Logout ke baad page reset
   $('#mainApp').classList.remove('show');
   $('#loginScreen').style.display = 'flex';
   $('#loginPass').value = '';
@@ -661,6 +659,14 @@ function go(page){
   const el=$('#page-'+page);
   if(el){ el.classList.add('active'); RENDER[page] && RENDER[page](); }
   $('#sidebar').classList.remove('open');
+  
+  // 🔥 Save Last Page
+  if(page !== 'dashboard' && DB.settings.currentUserId) {
+    localStorage.setItem(LAST_PAGE_KEY, page);
+  } else if(page === 'dashboard') {
+    localStorage.removeItem(LAST_PAGE_KEY);
+  }
+  
   window.scrollTo({top:0,behavior:'smooth'});
 }
 function updateTopbar(){
@@ -895,7 +901,6 @@ function rowToLead(row,u){
     if(c.type === 'date') val = toDate(val) || (c.key==='entryDate'? today() : '');
     else if(c.type === 'number') val = Number(String(val).replace(/[^\d.]/g,'')) || 0;
     
-    // 🔥 Agar naya column hai, toh customData ke andar daalo
     if (!baseKeys.includes(c.key)) {
       lead.customData[c.key] = val;
     } else {
@@ -914,11 +919,11 @@ function rowToLead(row,u){
     });
   }
 
-  // 🔥 Nayi lead ki pehli tagging history
   if(lead.tagging) {
     lead.taggingHistory.push({
       oldTag: '—',
       newTag: lead.tagging,
+      remarks: lead.remarks || '—',
       date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
     });
   }
@@ -1258,7 +1263,6 @@ function editLead(id){
     let input;
     
     if(c.key==='tagging') {
-      // 🔥 Tagging ke aage History Button add kiya
       let tagHistoryBtn = '';
       if(l && l.taggingHistory && l.taggingHistory.length > 0) {
         tagHistoryBtn = `<button class="btn sm ghost" style="margin-left:10px;padding:2px 8px;font-size:10px;border:1px solid var(--warn);color:var(--warn)" onclick="openTaggingHistory('${l.id}')">🏷️ History (${l.taggingHistory.length})</button>`;
@@ -1394,13 +1398,12 @@ async function saveLead(id){
       const oldLead = DB.leads[idx];
       const oldCustom = oldLead.customData || {};
       
-      // 🔥 Tagging History Save karein (Remarks ke sath)
       let tagHistory = oldLead.taggingHistory || [];
       if (data.tagging && data.tagging !== oldLead.tagging) {
         tagHistory.push({
           oldTag: oldLead.tagging || '—',
           newTag: data.tagging,
-          remarks: data.remarks || '—', // 🔥 Us waqt ka remark save hoga
+          remarks: data.remarks || '—',
           date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
         });
       }
@@ -1438,12 +1441,11 @@ async function saveLead(id){
   else { 
     const newLead = Object.assign({id:uid('ld'),createdAt:Date.now(),remarksHistory:[], taggingHistory:[], customData: customData}, data);
     
-    // 🔥 Nayi lead ki pehli tagging history (Remarks ke sath)
     if(newLead.tagging) {
       newLead.taggingHistory.push({
         oldTag: '—',
         newTag: newLead.tagging,
-        remarks: newLead.remarks || '—', // 🔥 Pehla remark save hoga
+        remarks: newLead.remarks || '—',
         date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
       });
     }
@@ -1849,10 +1851,7 @@ function addTag(){
   $('#newTag').value=''; 
   saveLocal();
   
-  // 🔥 Settings page ko turant refresh karein
   RENDER.settings(); 
-  
-  // 🔥 Agar Leads page khula hai, toh usko bhi turant refresh karein
   if(UI.page === 'leads') {
     RENDER.leads();
   }
@@ -1865,10 +1864,7 @@ function removeTag(t){
   DB.tags=DB.tags.filter(x=>x!==t); 
   saveLocal();
   
-  // 🔥 Settings page ko turant refresh karein
   RENDER.settings();
-  
-  // 🔥 Agar Leads page khula hai, toh usko bhi turant refresh karein
   if(UI.page === 'leads') {
     RENDER.leads();
   }
