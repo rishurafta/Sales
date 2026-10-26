@@ -660,11 +660,9 @@ function go(page){
   if(el){ el.classList.add('active'); RENDER[page] && RENDER[page](); }
   $('#sidebar').classList.remove('open');
   
-  // 🔥 Save Last Page
-  if(page !== 'dashboard' && DB.settings.currentUserId) {
+  // 🔥 YAHAN FIX HAI: Ab page hamesha save hoga (Dashboard bhi)
+  if(DB.settings.currentUserId) {
     localStorage.setItem(LAST_PAGE_KEY, page);
-  } else if(page === 'dashboard') {
-    localStorage.removeItem(LAST_PAGE_KEY);
   }
   
   window.scrollTo({top:0,behavior:'smooth'});
@@ -1100,6 +1098,36 @@ RENDER.leads = function(){
   
   if(!DB.columns || DB.columns.length === 0) DB.columns = JSON.parse(JSON.stringify(DEFAULT_COLUMNS));
   
+  // 🔥 SMART FIX: Agar pehle se page bana hua hai, toh sirf table update karo
+  const isFirstLoad = !$('#leadSearchInput');
+  
+  if (isFirstLoad) {
+    // Pehli baar poora page banao
+    const cols=DB.columns.filter(c=>c.visible);
+    $('#page-leads').innerHTML=`
+    <div class="page-head">
+      <div><h1>Leads</h1><p class="muted" id="leadCountText">Loading...</p></div>
+      <div class="filters">
+        <input id="leadSearchInput" style="width:210px" placeholder="🔍 Search name, mobile, shop…" value="${esc(UI.leadSearch)}" oninput="handleLeadSearch(this.value)">
+        <select id="leadTagFilter" style="width:auto" onchange="UI.leadTag=this.value;RENDER.leads()"><option value="all">All Tagging</option>${(DB.tags||DEFAULT_TAGS).map(t=>`<option value="${esc(t)}" ${UI.leadTag===t?'selected':''}>${esc(t)}</option>`).join('')}</select>
+        <select id="leadUserFilter" style="width:auto" onchange="UI.leadUser=this.value;RENDER.leads()"><option value="all">All Users</option>${DB.users.map(u=>`<option value="${u.id}" ${UI.leadUser===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}</select>
+        <button class="btn" onclick="openColumnSettings()">⚙️ Columns</button>
+        <button class="btn primary" onclick="editLead()">＋ Add Lead</button>
+        <button class="btn" onclick="exportLeads()">⬇ Export</button>
+        <button id="bulkDeleteBtn" class="btn danger" style="display:none" onclick="bulkDeleteLeads()">🗑 Delete Selected</button>
+      </div>
+    </div>
+    <div class="card">
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr id="leadTableHead"></tr></thead>
+          <tbody id="leadTableBody"></tbody>
+        </table>
+      </div>
+    </div>`;
+  }
+  
+  // Data filter karo
   const cols=DB.columns.filter(c=>c.visible);
   let leads=filterLeads({from:'0000-01-01', to:'9999-12-31'});
   
@@ -1122,57 +1150,42 @@ RENDER.leads = function(){
 
   const allChecked = leads.length > 0 && leads.every(l => UI.selectedLeads.has(l.id));
 
-  // 🔥 CURSOR FIX: oninput ki jagah naya function lagaya hai
-  $('#page-leads').innerHTML=`
-  <div class="page-head">
-    <div><h1>Leads</h1><p class="muted">${leads.length} leads — All users can view all data</p></div>
-    <div class="filters">
-      <input id="leadSearchInput" style="width:210px" placeholder="🔍 Search name, mobile, shop…" value="${esc(UI.leadSearch)}" oninput="handleLeadSearch(this.value)">
-      <select style="width:auto" onchange="UI.leadTag=this.value;RENDER.leads()"><option value="all">All Tagging</option>${(DB.tags||DEFAULT_TAGS).map(t=>`<option value="${esc(t)}" ${UI.leadTag===t?'selected':''}>${esc(t)}</option>`).join('')}</select>
-      <select style="width:auto" onchange="UI.leadUser=this.value;RENDER.leads()"><option value="all">All Users</option>${DB.users.map(u=>`<option value="${u.id}" ${UI.leadUser===u.id?'selected':''}>${esc(u.name)}</option>`).join('')}</select>
-      <button class="btn" onclick="openColumnSettings()">⚙️ Columns</button>
-      <button class="btn primary" onclick="editLead()">＋ Add Lead</button>
-      <button class="btn" onclick="exportLeads()">⬇ Export</button>
-      ${UI.selectedLeads.size > 0 ? `<button class="btn danger" onclick="bulkDeleteLeads()">🗑 Delete Selected (${UI.selectedLeads.size})</button>` : ''}
-    </div>
-  </div>
-  <div class="card">
-    <div class="tbl-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th style="width:40px"><input type="checkbox" onchange="toggleSelectAllLeads(this.checked)" ${allChecked?'checked':''} style="width:auto;cursor:pointer"></th>
-            ${cols.map(c=>`<th>${esc(c.label)}</th>`).join('')}
-            <th>Assigned</th>
-            <th style="text-align:right" class="action-col">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${leads.length?leads.map(l=>`<tr>
-            <td><input type="checkbox" value="${l.id}" ${UI.selectedLeads.has(l.id)?'checked':''} onchange="toggleSelectLead('${l.id}', this.checked)" style="width:auto;cursor:pointer"></td>
-            ${cols.map(c=>`<td>${cell(l,c)}</td>`).join('')}
-            <td>${esc(userName(l.assignedTo))}</td>
-            <td style="text-align:right;white-space:nowrap" class="action-col">
-              <button class="btn sm" title="Edit" onclick="editLead('${l.id}')">✏️</button>
-              <button class="btn sm" title="Send Message" onclick="sendMessage('${l.id}')">💬</button>
-              <button class="btn sm danger" title="Delete" onclick="deleteLead('${l.id}')">🗑</button>
-            </td>
-          </tr>`).join(''):`<tr><td colspan="${cols.length+3}" class="empty">No leads found</td></tr>`}
-        </tbody>
-      </table>
-    </div>
-  </div>`;
-
-  // 🔥 Search bar mein cursor wapas set karein
-  if (UI.leadSearch.length > 0) {
-    const input = document.getElementById('leadSearchInput');
-    if (input) {
-      input.focus();
-      // Cursor ko line ke end mein rakhne ke liye
-      const val = input.value;
-      input.value = '';
-      input.value = val;
+  // 🔥 Sirf Table aur Text ko update karo (Input box ko chhua bhi nahi)
+  const countEl = document.getElementById('leadCountText');
+  if(countEl) countEl.textContent = `${leads.length} leads — All users can view all data`;
+  
+  const bulkBtn = document.getElementById('bulkDeleteBtn');
+  if (bulkBtn) {
+    if (UI.selectedLeads.size > 0) {
+      bulkBtn.style.display = 'inline-flex';
+      bulkBtn.textContent = `🗑 Delete Selected (${UI.selectedLeads.size})`;
+    } else {
+      bulkBtn.style.display = 'none';
     }
+  }
+
+  const thead = document.getElementById('leadTableHead');
+  if(thead) {
+    thead.innerHTML = `
+      <th style="width:40px"><input type="checkbox" onchange="toggleSelectAllLeads(this.checked)" ${allChecked?'checked':''} style="width:auto;cursor:pointer"></th>
+      ${cols.map(c=>`<th>${esc(c.label)}</th>`).join('')}
+      <th>Assigned</th>
+      <th style="text-align:right" class="action-col">Actions</th>
+    `;
+  }
+
+  const tbody = document.getElementById('leadTableBody');
+  if(tbody) {
+    tbody.innerHTML = leads.length ? leads.map(l=>`<tr>
+      <td><input type="checkbox" value="${l.id}" ${UI.selectedLeads.has(l.id)?'checked':''} onchange="toggleSelectLead('${l.id}', this.checked)" style="width:auto;cursor:pointer"></td>
+      ${cols.map(c=>`<td>${cell(l,c)}</td>`).join('')}
+      <td>${esc(userName(l.assignedTo))}</td>
+      <td style="text-align:right;white-space:nowrap" class="action-col">
+        <button class="btn sm" title="Edit" onclick="editLead('${l.id}')">✏️</button>
+        <button class="btn sm" title="Send Message" onclick="sendMessage('${l.id}')">💬</button>
+        <button class="btn sm danger" title="Delete" onclick="deleteLead('${l.id}')">🗑</button>
+      </td>
+    </tr>`).join('') : `<tr><td colspan="${cols.length+3}" class="empty">No leads found</td></tr>`;
   }
 };
 
@@ -1184,7 +1197,7 @@ function handleLeadSearch(val) {
   clearTimeout(__searchTimeout);
   __searchTimeout = setTimeout(() => {
     RENDER.leads();
-  }, 600); // 600ms wait
+  }, 500); // 500ms wait
 }
 
 function toggleSelectLead(id, checked) {
