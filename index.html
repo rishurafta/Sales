@@ -1654,8 +1654,19 @@ function promptAdminPassword(callback) {
 function verifyAdminPass(callback) {
   const pass = $('#adminPass').value;
   const admin = DB.users.find(u => u.role === 'Admin');
-  if (admin && admin.password === pass) { closeModal(); if (callback === 'render') RENDER.settings(); toast('Access Granted ✔', 'ok'); }
-  else { toast('Incorrect Admin Password', 'err'); }
+  
+  if (admin && admin.password === pass) { 
+    closeModal(); // Pehle modal band karo
+    toast('Access Granted ✔', 'ok'); 
+    
+    // 🔥 Yahan check karo: Agar callback render hai, toh settings page render karo
+    if (callback === 'render') {
+      RENDER.settings(); 
+    }
+  }
+  else { 
+    toast('Incorrect Admin Password', 'err'); 
+  }
 }
 
 RENDER.settings = function(){
