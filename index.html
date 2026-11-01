@@ -586,24 +586,29 @@ async function fetchLeads() {
       });
 
       if(data.settings) {
-  // 🔥 Force logout check (dusre device se logout hua kya?)
-  if (data.settings.forceLogout && DB.settings.currentUserId) {
-    const myLogoutTime = DB.settings.lastLogoutSeen || 0;
-    if (data.settings.forceLogout > myLogoutTime) {
-      console.log('🚫 Force logout received from another device');
-      DB.settings.currentUserId = null;
-      DB.settings.lastLogoutSeen = data.settings.forceLogout;
-      stopSessionTimer();
-      saveLocal();
-      localStorage.removeItem(LAST_PAGE_KEY);
-      $('#mainApp').classList.remove('show');
-      $('#loginScreen').style.display = 'flex';
-      toast('Logged out from another device', 'info');
-      return;
-    }
-  }
-  DB.settings = { ...DB.settings, ...data.settings };
-}
+        // 🔥 SIRF APNE USER KA FORCE LOGOUT CHECK KARO
+        const myUserId = DB.settings.currentUserId;
+        if (myUserId && data.settings["forceLogout_" + myUserId]) {
+          const cloudLogoutTime = data.settings["forceLogout_" + myUserId];
+          const myLogoutTime = DB.settings.lastLogoutSeen || 0;
+          
+          if (cloudLogoutTime > myLogoutTime) {
+            console.log('🚫 Force logout received for user:', myUserId);
+            DB.settings.currentUserId = null;
+            DB.settings.sessionDevice = null;
+            DB.settings.lastLogoutSeen = cloudLogoutTime;
+            stopSessionTimer();
+            saveLocal();
+            localStorage.removeItem(LAST_PAGE_KEY);
+            $('#mainApp').classList.remove('show');
+            $('#loginScreen').style.display = 'flex';
+            toast('Logged out from another device', 'info');
+            return;
+          }
+        }
+        DB.settings = { ...DB.settings, ...data.settings };
+      }
+      
       if(data.users && data.users.length > 0) DB.users = data.users;
       
       if(data.settings && data.settings.tags && data.settings.tags.length > 0) {
@@ -805,15 +810,17 @@ async function doLogin(){
   startSessionTimer();
   toast('Welcome back, ' + user.name.split(' ')[0] + '!','ok');
 }
-  async function confirmLogout(){
-  if(!confirm('Are you sure you want to log out from ALL devices?')) return;
+async function confirmLogout(){
+  if(!confirm('Are you sure you want to log out from this device?')) return;
+  
+  const currentUserId = DB.settings.currentUserId; // 🔥 Current user ki ID save ki
   
   stopSessionTimer();
   DB.settings.currentUserId = null;
   DB.settings.sessionDevice = null;
   DB.settings.lastActivity = 0;
   
-  // 🔥 CLOUD PE BHEJO — sab devices ko pata chale
+  // 🔥 CLOUD PE SIRF IS USER KA FORCE LOGOUT BHEJO
   try {
     await fetch(`${API_URL}/api/sync`, {
       method: 'POST',
@@ -823,20 +830,20 @@ async function doLogin(){
           ...DB.settings, 
           currentUserId: null, 
           sessionDevice: null, 
-          forceLogout: Date.now()  // 🔥 timestamp
+          ["forceLogout_" + currentUserId]: Date.now() // 🔥 User specific timestamp
         }
       })
     });
-    console.log('✅ Force logout sent to cloud');
+    console.log('✅ Force logout sent to cloud for user:', currentUserId);
   } catch(e) { 
     console.warn('Cloud logout sync failed (offline?)', e); 
   }
   
-  saveLocal();
+  localStorage.removeItem(LAST_PAGE_KEY);
   $('#mainApp').classList.remove('show');
   $('#loginScreen').style.display = 'flex';
   $('#loginPass').value = '';
-  toast('Logged out from all devices', 'ok');
+  toast('Logged out successfully', 'ok');
 }
 
 function periodRange(period,from,to){
