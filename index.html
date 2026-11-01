@@ -416,7 +416,15 @@ function loadLocal() {
     ]
   };
 }
-
+// 🔥 DEVICE ID — har computer ki unique pehchaan
+function getDeviceId() {
+  let devId = localStorage.getItem('tyro_device_id');
+  if (!devId) {
+    devId = 'dev_' + Math.random().toString(36).slice(2, 12) + '_' + Date.now();
+    localStorage.setItem('tyro_device_id', devId);
+  }
+  return devId;
+}
 async function saveLocal() {
   const localDB = { settings: DB.settings, users: DB.users, columns: DB.columns, products: DB.products, staff: DB.staff };
   localStorage.setItem(LS_KEY, JSON.stringify(localDB));
@@ -447,7 +455,56 @@ let UI = {
 };
 let DASH_LISTS = {};
 let autoSyncTimer = null;
+// ═══════════════════════════════════════════════════════
+// 🔥 AUTO LOGOUT: 30 MINUTES INACTIVITY
+// ═══════════════════════════════════════════════════════
+let SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+let sessionTimer = null;
+let lastActivity = Date.now();
 
+function resetSessionTimer() {
+  lastActivity = Date.now();
+  if (DB?.settings?.currentUserId) {
+    DB.settings.lastActivity = lastActivity;
+  }
+}
+
+function startSessionTimer() {
+  stopSessionTimer();
+  resetSessionTimer();
+  
+  // Har 30 second me check karo ki 30 min ho gaye kya
+  sessionTimer = setInterval(() => {
+    if (!DB.settings.currentUserId) return;
+    
+    const idleMs = Date.now() - lastActivity;
+    if (idleMs >= SESSION_TIMEOUT_MS) {
+      console.log('⏰ Session expired after 30 min inactivity');
+      autoLogout('Session expired after 30 minutes of inactivity');
+    }
+  }, 30000);
+  
+  // User ki activity pe timer reset karo
+  ['mousedown','keydown','touchstart','scroll','click'].forEach(ev => {
+    document.addEventListener(ev, resetSessionTimer, { passive: true });
+  });
+}
+
+function stopSessionTimer() {
+  if (sessionTimer) { clearInterval(sessionTimer); sessionTimer = null; }
+}
+
+function autoLogout(reason) {
+  stopSessionTimer();
+  DB.settings.currentUserId = null;
+  DB.settings.lastActivity = 0;
+  saveLocal();
+  localStorage.removeItem(LAST_PAGE_KEY);
+  $('#mainApp').classList.remove('show');
+  $('#loginScreen').style.display = 'flex';
+  $('#loginPass').value = '';
+  toast(reason || 'Logged out', 'info');
+}
 function toast(msg,type='info'){
   const el=document.createElement('div');
   el.className='toast '+type;
@@ -527,7 +584,25 @@ async function fetchLeads() {
         };
       });
 
-      if(data.settings) DB.settings = { ...DB.settings, ...data.settings };
+      if(data.settings) {
+  // 🔥 Force logout check (dusre device se logout hua kya?)
+  if (data.settings.forceLogout && DB.settings.currentUserId) {
+    const myLogoutTime = DB.settings.lastLogoutSeen || 0;
+    if (data.settings.forceLogout > myLogoutTime) {
+      console.log('🚫 Force logout received from another device');
+      DB.settings.currentUserId = null;
+      DB.settings.lastLogoutSeen = data.settings.forceLogout;
+      stopSessionTimer();
+      saveLocal();
+      localStorage.removeItem(LAST_PAGE_KEY);
+      $('#mainApp').classList.remove('show');
+      $('#loginScreen').style.display = 'flex';
+      toast('Logged out from another device', 'info');
+      return;
+    }
+  }
+  DB.settings = { ...DB.settings, ...data.settings };
+}
       if(data.users && data.users.length > 0) DB.users = data.users;
       
       if(data.settings && data.settings.tags && data.settings.tags.length > 0) {
@@ -591,6 +666,33 @@ async function boot() {
   }
 
   if (DB.settings.currentUserId && DB.users.some(u=>u.id===DB.settings.currentUserId)) {
+    
+    // 🔥 CHECK 1: Kya 30 min se zyada idle tha? (refresh ke case me)
+    const lastAct = DB.settings.lastActivity || 0;
+    if (lastAct && (Date.now() - lastAct) >= SESSION_TIMEOUT_MS) {
+      console.log('⏰ Session expired while away — forcing login');
+      DB.settings.currentUserId = null;
+      DB.settings.sessionDevice = null;
+      saveLocal();
+      $('#loginScreen').style.display = 'flex';
+      $('#mainApp').classList.remove('show');
+      toast('Session expired. Please login again.', 'info');
+      return;
+    }
+    
+    // 🔥 CHECK 2: Device match check (Requirement 1)
+    const currentDevice = getDeviceId();
+    if (DB.settings.sessionDevice && DB.settings.sessionDevice !== currentDevice) {
+      console.log('🚫 Session from different device — forcing login');
+      DB.settings.currentUserId = null;
+      DB.settings.sessionDevice = null;
+      saveLocal();
+      $('#loginScreen').style.display = 'flex';
+      $('#mainApp').classList.remove('show');
+      toast('Please login on this device.', 'info');
+      return;
+    }
+    
     $('#loginScreen').style.display = 'none';
     $('#mainApp').classList.add('show');
     
@@ -598,6 +700,7 @@ async function boot() {
     
     const savedPage = localStorage.getItem(LAST_PAGE_KEY) || 'dashboard';
     go(savedPage); 
+    startSessionTimer(); // 🔥 timer restart
   } else {
     $('#loginScreen').style.display = 'flex';
     $('#mainApp').classList.remove('show');
@@ -619,9 +722,27 @@ function doLogin(){
     return;
   }
   
-  // 🔥 FIX: Force clear old session and set new user
+  // 🔥 NAYA: Device ID nikalo aur register karo
+  const currentDevice = getDeviceId();
+  const loggedDevices = JSON.parse(localStorage.getItem('tyro_logged_devices') || '[]');
+  
+  if (!loggedDevices.includes(currentDevice)) {
+    loggedDevices.push(currentDevice);
+    localStorage.setItem('tyro_logged_devices', JSON.stringify(loggedDevices));
+    console.log('🆕 New device registered:', currentDevice);
+  }
+  
+  // 🔥 NAYA: localStorage clear karo LEKIN device IDs bachao
+  const deviceId = localStorage.getItem('tyro_device_id');
+  const loggedDev = localStorage.getItem('tyro_logged_devices');
   localStorage.clear();
+  localStorage.setItem('tyro_device_id', deviceId);
+  localStorage.setItem('tyro_logged_devices', loggedDev);
+  
   DB.settings.currentUserId = user.id;
+  DB.settings.sessionDevice = currentDevice; // 🔥 session ko device se bind karo
+  DB.settings.sessionStarted = Date.now();
+  DB.settings.lastActivity = Date.now(); // 🔥 session timer ke liye
   saveLocal();
   
   $('#loginScreen').style.display = 'none';
@@ -630,17 +751,43 @@ function doLogin(){
   UI.page = 'dashboard';
   UI.leadUser = 'all';
   applyTheme(); renderNav(); updateTopbar(); go('dashboard');
+  startSessionTimer(); // 🔥 timer start karo (Requirement 2)
   toast('Welcome back, ' + user.name.split(' ')[0] + '!','ok');
 }
 
-function confirmLogout(){
-  if(!confirm('Are you sure you want to log out?')) return;
+async function confirmLogout(){
+  if(!confirm('Are you sure you want to log out from ALL devices?')) return;
+  
+  stopSessionTimer();
   DB.settings.currentUserId = null;
+  DB.settings.sessionDevice = null;
+  DB.settings.lastActivity = 0;
+  
+  // 🔥 CLOUD PE BHEJO — sab devices ko pata chale
+  try {
+    await fetch(`${API_URL}/api/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        settings: { 
+          ...DB.settings, 
+          currentUserId: null, 
+          sessionDevice: null, 
+          forceLogout: Date.now()  // 🔥 timestamp
+        }
+      })
+    });
+    console.log('✅ Force logout sent to cloud');
+  } catch(e) { 
+    console.warn('Cloud logout sync failed (offline?)', e); 
+  }
+  
   saveLocal();
-  localStorage.removeItem(LAST_PAGE_KEY); 
+  localStorage.removeItem(LAST_PAGE_KEY);
   $('#mainApp').classList.remove('show');
   $('#loginScreen').style.display = 'flex';
   $('#loginPass').value = '';
+  toast('Logged out from all devices', 'ok');
 }
 
 function periodRange(period,from,to){
@@ -1472,22 +1619,13 @@ async function saveLead(id){
   if(!data.name && !data.mobile){ toast('Name or Mobile is required','err'); return; }
   if(!data.entryDate) data.entryDate=today();
 
-  if(id){ 
+ if(id){ 
     const idx=DB.leads.findIndex(x=>x.id===id); 
     if(idx>-1) {
       const oldLead = DB.leads[idx];
       const oldCustom = oldLead.customData || {};
       
-      let tagHistory = oldLead.taggingHistory || [];
-      if (data.tagging && data.tagging !== oldLead.tagging) {
-        tagHistory.push({
-          oldTag: oldLead.tagging || '—',
-          newTag: data.tagging,
-          remarks: data.remarks || '—',
-          date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
-        });
-      }
-
+      // 🔥 STEP 1: Remarks history me push karo (agar naya remark likha hai)
       let remarksHistory = oldLead.remarksHistory || [];
       if (data.remarks && data.remarks.trim() !== '' && data.remarks !== oldLead.remarks) {
         remarksHistory.push({
@@ -1495,6 +1633,22 @@ async function saveLead(id){
           date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
         });
       }
+      
+      // 🔥 STEP 2: Tagging history me push karo (agar tagging change hui hai)
+      let tagHistory = oldLead.taggingHistory || [];
+      const taggingChanged = data.tagging && data.tagging !== oldLead.tagging;
+      
+      if (taggingChanged) {
+        tagHistory.push({
+          oldTag: oldLead.tagging || '—',
+          newTag: data.tagging,
+          remarks: data.remarks || '—',
+          date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+        });
+      }
+      
+      // 🔥🔥🔥 NEW FIX: HAR SAVE PE REMARKS CLEAR — chahe tagging change ho ya na ho
+      data.remarks = '';
       
       const finalCustomData = { ...oldCustom, ...customData };
       
@@ -1517,6 +1671,38 @@ async function saveLead(id){
       });
     }
     toast('Lead updated successfully','ok'); 
+  }
+  else { 
+    const newLead = Object.assign({id:uid('ld'),createdAt:Date.now(),remarksHistory:[], taggingHistory:[], customData: customData}, data);
+    
+    if(newLead.tagging) {
+      newLead.taggingHistory.push({
+        oldTag: '—',
+        newTag: newLead.tagging,
+        remarks: newLead.remarks || '—',
+        date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+      });
+    }
+
+    Object.assign(newLead, customData);
+    
+    if (newLead.remarks && newLead.remarks.trim() !== '') {
+      newLead.remarksHistory.push({
+        text: newLead.remarks,
+        date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
+      });
+    }
+    
+    // 🔥🔥🔥 NEW FIX: Naya lead add hone pe bhi remarks clear
+    newLead.remarks = '';
+    
+    DB.leads.push(newLead); 
+    await fetch(`${API_URL}/api/leads/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify([newLead])
+    });
+    toast('Lead added successfully','ok'); 
   }
   else { 
     const newLead = Object.assign({id:uid('ld'),createdAt:Date.now(),remarksHistory:[], taggingHistory:[], customData: customData}, data);
