@@ -497,6 +497,7 @@ function stopSessionTimer() {
 function autoLogout(reason) {
   stopSessionTimer();
   DB.settings.currentUserId = null;
+  DB.settings.sessionDevice = null; // 🔥 YE LINE ADD KARO
   DB.settings.lastActivity = 0;
   saveLocal();
   localStorage.removeItem(LAST_PAGE_KEY);
@@ -721,8 +722,6 @@ async function boot() {
     $('#mainApp').classList.remove('show');
   }
 }
-
-
 async function doLogin(){
   const id = $('#loginId').value.trim().toLowerCase();
   const pass = $('#loginPass').value;
@@ -805,7 +804,8 @@ async function doLogin(){
   applyTheme(); renderNav(); updateTopbar(); go('dashboard');
   startSessionTimer();
   toast('Welcome back, ' + user.name.split(' ')[0] + '!','ok');
-}async function confirmLogout(){
+}
+  async function confirmLogout(){
   if(!confirm('Are you sure you want to log out from ALL devices?')) return;
   
   stopSessionTimer();
@@ -833,7 +833,6 @@ async function doLogin(){
   }
   
   saveLocal();
-  localStorage.removeItem(LAST_PAGE_KEY);
   $('#mainApp').classList.remove('show');
   $('#loginScreen').style.display = 'flex';
   $('#loginPass').value = '';
