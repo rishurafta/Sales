@@ -660,9 +660,19 @@ function clearLocalAndReload() {
 
 async function boot() {
   // 1️⃣ Cloud se fresh data laao
+  // 🔥 Refresh hote waqt local session ko bachao, cloud se overwrite mat hone do
+  const localSession = DB.settings.currentUserId;
+  const localDevice = DB.settings.sessionDevice;
+
   await fetchLeads();
   await fetchUsers();        
   await fetchUsers();        
+  
+  // Agar local me session tha, to cloud se aayi hui null setting ko ignore karo
+  if (localSession) {
+    DB.settings.currentUserId = localSession;
+    DB.settings.sessionDevice = localDevice;
+  }
   
   ensurePerms();
   applyTheme();
