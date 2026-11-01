@@ -606,7 +606,10 @@ async function fetchLeads() {
             return;
           }
         }
+                // 🔥 CLOUD DATA MERGE KARO LEKIN ACTIVE LOCAL SESSION KO BACHAAO
+        const activeSession = DB.settings.currentUserId;
         DB.settings = { ...DB.settings, ...data.settings };
+        if (activeSession) DB.settings.currentUserId = activeSession;
       }
       
       if(data.users && data.users.length > 0) DB.users = data.users;
@@ -659,19 +662,21 @@ function clearLocalAndReload() {
 }
 
 async function boot() {
-  // 1️⃣ Cloud se fresh data laao
-  // 🔥 Refresh hote waqt local session ko bachao, cloud se overwrite mat hone do
+  // 🔥 Refresh hote waqt local session ko bachao
   const localSession = DB.settings.currentUserId;
   const localDevice = DB.settings.sessionDevice;
+  const localLastActivity = DB.settings.lastActivity;
 
+  // 1️⃣ Cloud se fresh data laao
   await fetchLeads();
   await fetchUsers();        
   await fetchUsers();        
   
-  // Agar local me session tha, to cloud se aayi hui null setting ko ignore karo
+  // 🔥 Agar local me session tha, to cloud se aayi hui null setting ko ignore karo
   if (localSession) {
     DB.settings.currentUserId = localSession;
     DB.settings.sessionDevice = localDevice;
+    DB.settings.lastActivity = localLastActivity;
   }
   
   ensurePerms();
@@ -784,9 +789,10 @@ async function doLogin(){
   DB.settings.sessionStarted = Date.now();
   DB.settings.lastActivity = Date.now();
   saveLocal();
-  
-  // 🔥 STEP 5: CLOUD ME DEVICE REGISTER KARO (NAYA CODE)
+
+    // 🔥 STEP 5: CLOUD ME DEVICE REGISTER KARO
   try {
+    // Cloud ko mat bolo ki currentUserId change hua hai (kyunki abhi local login hua hai)
     const checkRes = await fetch(`${API_URL}/api/auth/device-check`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
