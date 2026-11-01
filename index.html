@@ -653,6 +653,7 @@ function clearLocalAndReload() {
 }
 
 async function boot() {
+  // 1️⃣ Cloud se fresh data laao
   await fetchLeads();
   await fetchUsers();        
   await fetchUsers();        
@@ -660,54 +661,69 @@ async function boot() {
   ensurePerms();
   applyTheme();
   
+  // 2️⃣ URL me logout=true hai to force logout
   if(window.location.search.includes('logout=true')) {
     DB.settings.currentUserId = null;
     saveLocal();
   }
 
+  // 3️⃣ Session valid hai ya nahi — check karo
   if (DB.settings.currentUserId && DB.users.some(u=>u.id===DB.settings.currentUserId)) {
     
-    // 🔥 CHECK 1: Kya 30 min se zyada idle tha? (refresh ke case me)
-    const lastAct = DB.settings.lastActivity || 0;
-    if (lastAct && (Date.now() - lastAct) >= SESSION_TIMEOUT_MS) {
-      console.log('⏰ Session expired while away — forcing login');
-      DB.settings.currentUserId = null;
-      DB.settings.sessionDevice = null;
-      saveLocal();
-      $('#loginScreen').style.display = 'flex';
-      $('#mainApp').classList.remove('show');
-      toast('Session expired. Please login again.', 'info');
-      return;
-    }
-    
-    // 🔥 CHECK 2: Device match check (Requirement 1)
+    // ═══════════════════════════════════════════════════
+    // 🔥 CHECK 1: DEVICE MATCH — kya session isi device pe hai?
+    // ═══════════════════════════════════════════════════
     const currentDevice = getDeviceId();
     if (DB.settings.sessionDevice && DB.settings.sessionDevice !== currentDevice) {
-      console.log('🚫 Session from different device — forcing login');
+      console.log('🚫 Different device — forcing login');
+      console.log('   Saved device:', DB.settings.sessionDevice);
+      console.log('   Current device:', currentDevice);
+      
       DB.settings.currentUserId = null;
       DB.settings.sessionDevice = null;
       saveLocal();
       $('#loginScreen').style.display = 'flex';
       $('#mainApp').classList.remove('show');
       toast('Please login on this device.', 'info');
-      return;
+      return; // 🔥 IMPORTANT: yahan ruk jao, aage mat jao
     }
     
+    // ═══════════════════════════════════════════════════
+    // 🔥 CHECK 2: 30 MIN IDLE — kya refresh ke baad 30 min ho gaye?
+    // ═══════════════════════════════════════════════════
+    const lastAct = DB.settings.lastActivity || 0;
+    if (lastAct && (Date.now() - lastAct) >= SESSION_TIMEOUT_MS) {
+      console.log('⏰ Session expired while away — forcing login');
+      
+      DB.settings.currentUserId = null;
+      DB.settings.sessionDevice = null;
+      saveLocal();
+      $('#loginScreen').style.display = 'flex';
+      $('#mainApp').classList.remove('show');
+      toast('Session expired. Please login again.', 'info');
+      return; // 🔥 IMPORTANT: yahan ruk jao, aage mat jao
+    }
+    
+    // ═══════════════════════════════════════════════════
+    // ✅ Sab checks pass — dashboard kholo
+    // ═══════════════════════════════════════════════════
     $('#loginScreen').style.display = 'none';
     $('#mainApp').classList.add('show');
-    
-    updateTopbar(); 
+    updateTopbar();
     
     const savedPage = localStorage.getItem(LAST_PAGE_KEY) || 'dashboard';
-    go(savedPage); 
-    startSessionTimer(); // 🔥 timer restart
+    go(savedPage);
+    startSessionTimer(); // 🔥 timer restart karo
+    
   } else {
+    // ❌ Koi session nahi → login screen dikhao
     $('#loginScreen').style.display = 'flex';
     $('#mainApp').classList.remove('show');
   }
 }
 
-function doLogin(){
+
+async function doLogin(){
   const id = $('#loginId').value.trim().toLowerCase();
   const pass = $('#loginPass').value;
   
@@ -722,40 +738,74 @@ function doLogin(){
     return;
   }
   
-  // 🔥 NAYA: Device ID nikalo aur register karo
+  // 🔥 STEP 1: Device ID lo
   const currentDevice = getDeviceId();
-  const loggedDevices = JSON.parse(localStorage.getItem('tyro_logged_devices') || '[]');
   
-  if (!loggedDevices.includes(currentDevice)) {
-    loggedDevices.push(currentDevice);
-    localStorage.setItem('tyro_logged_devices', JSON.stringify(loggedDevices));
-    console.log('🆕 New device registered:', currentDevice);
+  // 🔥 STEP 2: Device-user binding check
+  const deviceUserMap = JSON.parse(localStorage.getItem('tyro_device_user_map') || '{}');
+  
+  // Agar is device pehle koi aur user login tha → cleanup
+  if (deviceUserMap[currentDevice] && deviceUserMap[currentDevice] !== user.id) {
+    console.log('🔄 Different user on same device — resetting session');
+    localStorage.removeItem(LS_KEY);
+    localStorage.removeItem(LAST_PAGE_KEY);
   }
   
-  // 🔥 NAYA: localStorage clear karo LEKIN device IDs bachao
+  // Is device pe is user ko bind karo
+  deviceUserMap[currentDevice] = user.id;
+  localStorage.setItem('tyro_device_user_map', JSON.stringify(deviceUserMap));
+  
+  // 🔥 STEP 3: localStorage clear karo LEKIN device IDs bachao
   const deviceId = localStorage.getItem('tyro_device_id');
   const loggedDev = localStorage.getItem('tyro_logged_devices');
+  const devUserMap = localStorage.getItem('tyro_device_user_map');
   localStorage.clear();
-  localStorage.setItem('tyro_device_id', deviceId);
-  localStorage.setItem('tyro_logged_devices', loggedDev);
+  localStorage.setItem('tyro_device_id', deviceId || currentDevice);
+  if (loggedDev) localStorage.setItem('tyro_logged_devices', loggedDev);
+  if (devUserMap) localStorage.setItem('tyro_device_user_map', devUserMap);
   
+  // 🔥 STEP 4: Session bind karo device pe
   DB.settings.currentUserId = user.id;
-  DB.settings.sessionDevice = currentDevice; // 🔥 session ko device se bind karo
+  DB.settings.sessionDevice = currentDevice;
   DB.settings.sessionStarted = Date.now();
-  DB.settings.lastActivity = Date.now(); // 🔥 session timer ke liye
+  DB.settings.lastActivity = Date.now();
   saveLocal();
   
+  // 🔥 STEP 5: CLOUD ME DEVICE REGISTER KARO (NAYA CODE)
+  try {
+    const checkRes = await fetch(`${API_URL}/api/auth/device-check`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user.id, deviceId: currentDevice })
+    });
+    
+    if (checkRes.ok) {
+      const checkData = await checkRes.json();
+      if (checkData.isNewDevice) {
+        console.log('🆕 New device detected — registering...');
+      }
+    }
+    
+    await fetch(`${API_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user.id, deviceId: currentDevice, timestamp: Date.now() })
+    });
+    console.log('✅ Device registered on cloud');
+  } catch(e) {
+    console.warn('Cloud device sync failed (offline?)', e);
+  }
+  
+  // STEP 6: UI update karo
   $('#loginScreen').style.display = 'none';
   $('#mainApp').classList.add('show');
   
   UI.page = 'dashboard';
   UI.leadUser = 'all';
   applyTheme(); renderNav(); updateTopbar(); go('dashboard');
-  startSessionTimer(); // 🔥 timer start karo (Requirement 2)
+  startSessionTimer();
   toast('Welcome back, ' + user.name.split(' ')[0] + '!','ok');
-}
-
-async function confirmLogout(){
+}async function confirmLogout(){
   if(!confirm('Are you sure you want to log out from ALL devices?')) return;
   
   stopSessionTimer();
@@ -1704,36 +1754,7 @@ async function saveLead(id){
     });
     toast('Lead added successfully','ok'); 
   }
-  else { 
-    const newLead = Object.assign({id:uid('ld'),createdAt:Date.now(),remarksHistory:[], taggingHistory:[], customData: customData}, data);
-    
-    if(newLead.tagging) {
-      newLead.taggingHistory.push({
-        oldTag: '—',
-        newTag: newLead.tagging,
-        remarks: newLead.remarks || '—',
-        date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
-      });
-    }
-
-    Object.assign(newLead, customData);
-    
-    if (newLead.remarks && newLead.remarks.trim() !== '') {
-      newLead.remarksHistory.push({
-        text: newLead.remarks,
-        date: new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
-      });
-    }
-    
-    DB.leads.push(newLead); 
-    await fetch(`${API_URL}/api/leads/sync`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify([newLead])
-    });
-    toast('Lead added successfully','ok'); 
-  }
-  closeModal(); refresh();
+    closeModal(); refresh();
 }
 async function deleteLead(id){
   const l=DB.leads.find(x=>x.id===id); if(!l) return;
